@@ -182,34 +182,55 @@ async def answer_doubt(req: DoubtRequest):
                 error=f"No course material uploaded yet for {req.course_id}",
             )
 
-        # Find relevant chunks by keyword matching
+        # Find relevant chunks by keyword matching — score each topic
         question_words = set(sanitised_question.lower().split())
-        relevant_chunks = []
+        # Remove common stop words so they don't inflate scores
+        stop_words = {"what", "is", "are", "the", "a", "an", "how", "does", "do", "why",
+                      "when", "where", "who", "which", "tell", "me", "about", "explain"}
+        content_words = question_words - stop_words
+
+        best_chunks = []
         source_file = "Unknown"
+        best_score = 0
 
         for topic in kb.get("topics", []):
-            topic_tags = set(topic.get("topic_tags", []))
+            topic_tags = set(tag.lower() for tag in topic.get("topic_tags", []))
             key_terms = set(k.lower() for k in topic.get("key_terms", {}).keys())
-            overlap = question_words & (topic_tags | key_terms)
+            topic_name_words = set(topic.get("topic_name", "").lower().split())
+            raw_text = " ".join(
+                chunk["text"] for chunk in topic.get("raw_chunks", [])[:3]
+            ).lower()
 
-            if overlap or any(word in topic.get("topic_name", "").lower() for word in question_words):
-                relevant_chunks.extend(topic.get("summary_points", []))
-                relevant_chunks.extend(
-                    chunk["text"] for chunk in topic.get("raw_chunks", [])[:2]
-                )
+            # Score: keyword overlap + raw text mentions
+            overlap = content_words & (topic_tags | key_terms | topic_name_words)
+            raw_hits = sum(1 for w in content_words if w in raw_text)
+            score = len(overlap) * 2 + raw_hits
+
+            if score > best_score:
+                best_score = score
+                best_chunks = topic.get("summary_points", []) + [
+                    chunk["text"] for chunk in topic.get("raw_chunks", [])[:3]
+                ]
                 source_file = topic.get("source_file", "Unknown")
 
-        if not relevant_chunks:
-            # Fallback: use first topic's summary
-            if kb.get("topics"):
-                first_topic = kb["topics"][0]
-                relevant_chunks = first_topic.get("summary_points", [])
-                source_file = first_topic.get("source_file", "Unknown")
+        # If no topic scored at all, return early — don't hallucinate with unrelated content
+        if best_score == 0:
+            return DoubtResponse(
+                success=True,
+                answer=(
+                    f"I don't have information about that in the {req.course_id.replace('_', ' ').title()} course notes. "
+                    "Try asking about a topic covered in your uploaded lecture PDFs, "
+                    "or upload the relevant PDF first so I can learn from it!"
+                ),
+                source="N/A",
+            )
+
+        relevant_chunks = best_chunks
 
         # Call OpenAI API for answer
         from openai import OpenAI
 
-        llm_model = os.getenv("LLM_MODEL", "gpt-5-mini")
+        llm_model = os.getenv("LLM_MODEL", "gpt-4o-mini")
         client = OpenAI()
         context = "\n".join(relevant_chunks[:10])
 

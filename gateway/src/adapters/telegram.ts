@@ -305,18 +305,21 @@ export class TelegramAdapter {
       const data = await response.json();
 
       if (data.success) {
+        // Strip characters that break Telegram's Markdown parser
+        const stripMd = (str: string) => str.replace(/[_*[\]`]/g, '');
+        
         let summaryText = '✅ *PDF Ingested Successfully!*\n\n';
-        summaryText += `📚 Topic: *${data.topic_id}*\n\n`;
+        summaryText += `📚 Topic: *${stripMd(data.topic_id)}*\n\n`;
 
         if (data.summary_points && data.summary_points.length > 0) {
           summaryText += '*Key Points:*\n';
           data.summary_points.forEach((point: string, i: number) => {
-            summaryText += `${i + 1}. ${point}\n`;
+            summaryText += `${i + 1}. ${stripMd(point)}\n`;
           });
         }
 
         if (data.topic_tags && data.topic_tags.length > 0) {
-          summaryText += `\n🏷️ Tags: ${data.topic_tags.join(', ')}`;
+          summaryText += `\n🏷️ Tags: ${stripMd(data.topic_tags.join(', '))}`;
         }
 
         summaryText += '\n\n_You can now ask questions about this topic!_';

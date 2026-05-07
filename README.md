@@ -118,10 +118,8 @@ EduClaw extends OpenClaw Base with:
 
 ## 👥 Team
 
-- Pavan Kumar (Team Lead) — Architecture, AI/ML, Python
-- [Team Member 2] — Gateway, TypeScript
-- [Team Member 3] — Testing, Documentation
-- [Team Member 4] — Demo, Presentation
+- Pavan Naik
+- Sumanth Hegde
 
 ## 📄 License
 

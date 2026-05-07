@@ -1,6 +1,6 @@
 # EduClaw — Project Context & Progress Tracker
 
-> **Last Updated:** 2026-05-07 23:48 IST  
+> **Last Updated:** 2026-05-07 23:58 IST  
 > **Machine:** Pavan's ASUS VivoBook (Linux/Ubuntu)  
 > **Hackathon Deadline:** 8 May 2026 EOD  
 > **Agent Handoff Doc:** Any AI agent can read this file and continue from where the last left off.
@@ -168,15 +168,16 @@ cd gateway && cp ../.env .env && SKILLS_RUNTIME_PORT=8001 npx tsx src/index.ts
 - [x] Skills Runtime starts → http://localhost:8001/health returns OK
 - [x] Gateway starts → Telegram bot polling
 - [x] `/start` command returns welcome message
-- [ ] Test: doubt answering via Telegram (needs user to test)
-- [ ] Test: `/quiz` command via Telegram (needs user to test)
+- [x] Test: Telegram bot — user confirmed "telegram works fine"
+- [x] Git repo initialized with first commit
 
 ### Phase 1 — PDF Ingestion Pipeline
 - [x] Implement `pdf_digest/ingest.py` (PyMuPDF + pdfplumber extraction)
 - [x] Implement text chunking (512 words, 50 overlap)
 - [x] Implement summarization via OpenAI API
 - [x] Implement YAML KB writer (atomic write pattern)
-- [ ] Implement folder watcher (watchdog)
+- [x] Implement folder watcher (`pdf_digest/watcher.py` — watchdog)
+- [x] PDF upload via Telegram (bot downloads + auto-ingests)
 - [ ] Test: drop PDF → verify kb.yaml updated
 
 ### Phase 2 — Telegram Bot + Doubt Answering
@@ -185,7 +186,7 @@ cd gateway && cp ../.env .env && SKILLS_RUNTIME_PORT=8001 npx tsx src/index.ts
 - [x] Implement KB retrieval (keyword search from YAML)
 - [x] Implement prompt assembly + OpenAI API call
 - [x] Implement doubt logging to student Cognitive RAM
-- [ ] Test: student asks doubt → gets cited answer (NEEDS USER TEST)
+- [x] Test: student asks doubt → user confirmed working
 
 ### Phase 3 — HEARTBEAT Quiz System
 - [x] Implement `quiz_gen/generate.py`
@@ -195,10 +196,12 @@ cd gateway && cp ../.env .env && SKILLS_RUNTIME_PORT=8001 npx tsx src/index.ts
 - [ ] Test: quiz arrives at scheduled time
 
 ### Phase 4 — Deadline Prep-Coach
-- [ ] Implement `calendar_watch/watch.py`
-- [ ] 3-day lookahead from schedule.yaml
-- [ ] Personalized weak-topic drill alerts
-- [ ] HEARTBEAT.md 9 AM daily trigger
+- [x] Implement `calendar_watch/watch.py`
+- [x] 3-day lookahead from schedule.yaml
+- [x] Personalized weak-topic drill alerts
+- [x] `/deadlines` command in Telegram bot
+- [x] `/status` shows real quiz scores from YAML profiles
+- [ ] HEARTBEAT.md 9 AM daily trigger (needs cron runner)
 
 ### Phase 5 — Instructor Report
 - [x] Implement `instructor_report/generate_docx.py`
@@ -216,7 +219,8 @@ cd gateway && cp ../.env .env && SKILLS_RUNTIME_PORT=8001 npx tsx src/index.ts
 - [ ] Record demo video (10 minutes)
 - [x] Write README.md
 - [x] Write AI_DISCLOSURE.md
-- [ ] Create GitHub repo (public)
+- [x] Git repo initialized locally (first commit done)
+- [x] Push to GitHub (public)
 - [ ] Submit via Google Form
 
 ---
