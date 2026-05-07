@@ -1,0 +1,50 @@
+course_id: networks_2024
+course_name: Computer Networks
+created_at: '2026-05-07T18:14:45.198619'
+topics:
+- topic_id: tcp_ip
+  topic_name: TCP/IP Protocol Suite
+  source_file: Unit3_TCP_IP.pdf
+  ingested_at: '2026-05-07T18:14:45.198721'
+  summary_points:
+  - TCP is connection-oriented; ensures reliable, ordered delivery via three-way handshake
+  - UDP is connectionless; fast but provides no delivery guarantee — used for streaming/DNS
+  - IP operates at the Network Layer, providing best-effort packet delivery across
+    networks
+  - TCP uses sequence numbers and ACKs for reliability; implements flow/congestion
+    control
+  - 'Efficiency formula: Stop-and-Wait = 1/(1+2a) where a = Tp/Tf — key exam concept'
+  key_terms:
+    TCP: Transmission Control Protocol — reliable, ordered, connection-oriented
+    UDP: User Datagram Protocol — unreliable, fast, connectionless
+    SYN: Synchronise flag — initiates TCP connection
+    ACK: Acknowledgement — confirms receipt of packet
+    RTT: Round Trip Time — time for packet to travel and return
+    Three-way handshake: SYN → SYN-ACK → ACK sequence to establish TCP connection
+  formulas:
+  - Throughput = Window Size / RTT
+  - Efficiency (Stop-and-Wait) = 1 / (1 + 2a) where a = Tp/Tf
+  topic_tags:
+  - transport_layer
+  - tcp
+  - udp
+  - protocols
+  raw_chunks:
+  - chunk_id: 1
+    text: TCP/IP is a suite of communication protocols used to interconnect network
+      devices on the internet. TCP provides reliable, ordered, and error-checked delivery
+      of a stream of bytes between applications running on hosts communicating via
+      an IP network.
+    word_count: 40
+  - chunk_id: 2
+    text: 'The three-way handshake is the method used by TCP to set up a TCP/IP connection.
+      The three steps are: 1) SYN - The client sends a SYN segment to the server.
+      2) SYN-ACK - The server acknowledges with SYN-ACK. 3) ACK - The client sends
+      ACK to establish the connection.'
+    word_count: 52
+  - chunk_id: 3
+    text: UDP is a connectionless protocol that provides a simple unreliable message
+      service. Unlike TCP, UDP does not guarantee delivery, ordering, or data integrity.
+      UDP is used in applications where speed is more critical than reliability, such
+      as video streaming, online gaming, and DNS lookups.
+    word_count: 48

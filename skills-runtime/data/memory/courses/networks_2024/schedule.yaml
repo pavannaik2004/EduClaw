@@ -1,0 +1,39 @@
+course_id: networks_2024
+course_name: Computer Networks
+academic_year: 2025-2026
+semester: Even
+schedule:
+- date: '2026-05-07'
+  topic_id: tcp_ip
+  topic_name: TCP/IP Protocol Suite
+  type: lecture
+- date: '2026-05-08'
+  topic_id: data_link
+  topic_name: Data Link Layer
+  type: lecture
+- date: '2026-05-09'
+  topic_id: transport_layer
+  topic_name: Transport Layer Protocols
+  type: lecture
+- date: '2026-05-10'
+  topic_id: network_layer
+  topic_name: Network Layer & Routing
+  type: lecture
+- date: '2026-05-11'
+  topic_id: application_layer
+  topic_name: Application Layer Protocols
+  type: lecture
+assignments:
+- title: Networks Lab 4 — Socket Programming
+  due_date: '2026-05-10'
+  topic_ids:
+  - tcp_ip
+  - socket_api
+  description: Implement a simple TCP client-server in Python
+exams:
+- title: Networks Internal Assessment 2
+  date: '2026-05-22'
+  topics:
+  - tcp_ip
+  - transport_layer
+  - data_link

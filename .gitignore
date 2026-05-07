@@ -1,0 +1,46 @@
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Dependencies
+node_modules/
+__pycache__/
+*.pyc
+.venv/
+.uv/
+
+# Build
+dist/
+build/
+*.egg-info/
+
+# Data (Docker volumes)
+data/inbox/
+data/memory/
+data/reports/
+data/logs/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Docker
+*.log
+
+# Ollama models
+ollama-models/
+
+# Python
+*.egg
+.pytest_cache/
+htmlcov/
+.coverage
+.mypy_cache/
+.ruff_cache/

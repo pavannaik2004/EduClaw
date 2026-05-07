@@ -1,0 +1,28 @@
+student_id: telegram_100004
+name: Rohit Menon
+roll_number: 1SI21CS036
+enrolled_courses:
+- networks_2024
+quiz_scores:
+  networks_2024:
+    tcp_ip:
+    - 70
+    - 55
+    - 65
+    data_link:
+    - 50
+    - 60
+doubt_log:
+- date: '2026-05-05'
+  course: networks_2024
+  question: Difference between TCP and UDP?
+  answered: true
+- date: '2026-05-06'
+  course: networks_2024
+  question: How does three-way handshake work?
+  answered: true
+weak_topics:
+- transport_layer
+subscription_active: true
+onboarded_at: '2026-04-30T23:44:45.212569'
+last_interaction: '2026-05-07T23:44:45.212576'
