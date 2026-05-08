@@ -8,18 +8,6 @@ import type { MessageEnvelope, AgentResponse, QuizPayload } from '../types/Messa
 import * as fs from 'fs';
 import * as path from 'path';
 
-// Intent patterns for routing
-const INTENT_PATTERNS: Record<string, RegExp[]> = {
-  doubt: [/what is/i, /how does/i, /explain/i, /difference between/i, /why/i, /what are/i, /define/i, /tell me/i],
-  quiz: [/\/quiz/i, /give me a quiz/i, /test me/i],
-  deadlines: [/\/deadlines/i, /\/deadline/i, /upcoming deadline/i, /due date/i],
-  examprep: [/\/examprep/i, /exam prep/i, /prepare for exam/i],
-  status: [/\/status/i, /my scores/i, /how am i doing/i],
-  scribe: [/\/scribe/i],
-  onboard: [/\/start/i],
-  help: [/\/help/i, /what can you do/i],
-};
-
 export class TelegramAdapter {
   private bot: TelegramBot;
   private skillsRuntimeUrl: string;
@@ -29,15 +17,6 @@ export class TelegramAdapter {
     this.skillsRuntimeUrl = skillsRuntimeUrl;
     this.setupHandlers();
     console.log('🤖 EduClaw Telegram bot started (polling mode)');
-  }
-
-  private classifyIntent(text: string): string {
-    for (const [intent, patterns] of Object.entries(INTENT_PATTERNS)) {
-      for (const pattern of patterns) {
-        if (pattern.test(text)) return intent;
-      }
-    }
-    return 'doubt'; // Default: treat as a doubt/question
   }
 
   private setupHandlers(): void {
@@ -53,16 +32,21 @@ export class TelegramAdapter {
         '🦞 *EduClaw — Your Academic Assistant*\n\n' +
           'Here\'s what I can do:\n\n' +
           '📚 Ask me any course-related question\n' +
-          '❓ `/quiz` — Get a quick quiz on today\'s topic\n' +
+          '❓ `/quiz` — Random topic quiz\n' +
+          '❓ `/quiz <topic>` — Quiz on a specific topic\n' +
+          '📋 `/topics` — See all available topics\n' +
           '📊 `/status` — Check your quiz scores & stats\n' +
           '📅 `/deadlines` — See upcoming deadlines\n' +
-          '📝 `/examprep` — Get personalised exam prep\n' +
-          '📋 `/scribe` — Generate meeting minutes\n' +
           '📄 Send me a PDF to add course material\n' +
           '❓ `/help` — Show this message\n\n' +
           '_Just type your question and I\'ll answer from your course notes!_',
         { parse_mode: 'Markdown' }
       );
+    });
+
+    // Handle /topics command
+    this.bot.onText(/\/topics/, async (msg) => {
+      await this.handleListTopics(msg);
     });
 
     // Handle /quiz command
@@ -88,9 +72,7 @@ export class TelegramAdapter {
     // Handle all other text messages (doubt answering)
     this.bot.on('message', async (msg) => {
       if (!msg.text || !msg.from) return;
-      // Skip commands that are already handled
       if (msg.text.startsWith('/')) return;
-
       await this.handleDoubt(msg);
     });
   }
@@ -103,14 +85,11 @@ export class TelegramAdapter {
       chatId,
       `👋 Welcome to *EduClaw*, ${name}!\n\n` +
         "I'm your AI-powered academic assistant. Here's what I do:\n\n" +
-        '📚 Send lecture summaries before class\n' +
-        '❓ Answer your course doubts (with citations!)\n' +
-        '📝 Daily quizzes to test your knowledge\n' +
-        '📅 Deadline alerts 3 days in advance\n' +
-        '📊 Track your quiz performance\n' +
+        '📚 Answer your course doubts (with citations!)\n' +
+        '📝 Quizzes on any uploaded topic\n' +
+        '📅 Deadline alerts\n' +
         '📄 Upload PDFs to add course material\n\n' +
-        'Try asking me something like:\n' +
-        '_"What is the difference between TCP and UDP?"_\n\n' +
+        'Try: _"What is the difference between TCP and UDP?"_\n' +
         'Or type `/help` for all commands.',
       { parse_mode: 'Markdown' }
     );
@@ -118,11 +97,44 @@ export class TelegramAdapter {
     console.log(`📥 New user onboarded: ${name} (${msg.from?.id})`);
   }
 
+  private async handleListTopics(msg: TelegramBot.Message): Promise<void> {
+    const chatId = msg.chat.id;
+
+    await this.bot.sendChatAction(chatId, 'typing');
+
+    try {
+      const response = await fetch(`${this.skillsRuntimeUrl}/skill/topics/networks_2024`);
+      const data = await response.json();
+
+      if (data.success && data.topics && data.topics.length > 0) {
+        const stripMd = (str: string) => str.replace(/[_*[\]`]/g, ' ').trim();
+
+        let text = `📋 *Available Topics (${data.count})*\n\n`;
+        data.topics.forEach((t: any, i: number) => {
+          text += `${i + 1}. *${stripMd(t.topic_name)}*\n`;
+          text += `   ID: \`${stripMd(t.topic_id)}\`\n`;
+          text += `   Source: ${stripMd(t.source_file)}\n\n`;
+        });
+        text += '_Use_ `/quiz <topic_id>` _to quiz on a specific topic._\n';
+        text += '_Use_ `/quiz` _for a random topic._';
+
+        await this.bot.sendMessage(chatId, text, { parse_mode: 'Markdown' });
+      } else {
+        await this.bot.sendMessage(
+          chatId,
+          '📋 No topics available yet. Send me a PDF to get started!'
+        );
+      }
+    } catch (err) {
+      console.error('Topics handler error:', err);
+      await this.bot.sendMessage(chatId, '⚠️ Could not fetch topics.');
+    }
+  }
+
   private async handleDoubt(msg: TelegramBot.Message): Promise<void> {
     const chatId = msg.chat.id;
     const userId = String(msg.from?.id);
 
-    // Send typing indicator
     await this.bot.sendChatAction(chatId, 'typing');
 
     try {
@@ -131,7 +143,7 @@ export class TelegramAdapter {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           student_id: `telegram_${userId}`,
-          course_id: 'networks_2024', // Default course for MVP
+          course_id: 'networks_2024',
           question: msg.text,
         }),
       });
@@ -163,16 +175,26 @@ export class TelegramAdapter {
 
   private async handleQuiz(msg: TelegramBot.Message, topicArg: string): Promise<void> {
     const chatId = msg.chat.id;
+    const trimmed = topicArg.trim();
+
+    // If user typed "/quiz list", show topics instead
+    if (trimmed === 'list') {
+      await this.handleListTopics(msg);
+      return;
+    }
 
     await this.bot.sendChatAction(chatId, 'typing');
 
     try {
+      // "random" if no arg, otherwise use what user typed
+      const topicId = trimmed || 'random';
+
       const response = await fetch(`${this.skillsRuntimeUrl}/skill/quiz_gen`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           course_id: 'networks_2024',
-          topic_id: topicArg.trim() || 'tcp_ip',
+          topic_id: topicId,
           count: 3,
         }),
       });
@@ -180,7 +202,7 @@ export class TelegramAdapter {
       const data = await response.json();
 
       if (data.success && data.questions) {
-        await this.bot.sendMessage(chatId, '📝 *Daily Quiz Time!*\n\nHere are your questions:', {
+        await this.bot.sendMessage(chatId, '📝 *Quiz Time!*\n\nHere are your questions:', {
           parse_mode: 'Markdown',
         });
 
@@ -195,7 +217,7 @@ export class TelegramAdapter {
       } else {
         await this.bot.sendMessage(
           chatId,
-          `⚠️ ${data.error || 'Could not generate quiz. Make sure course material is uploaded.'}`
+          `⚠️ ${data.error || 'Could not generate quiz.'}\n\nUse /topics to see available topics.`
         );
       }
     } catch (err) {
@@ -305,7 +327,6 @@ export class TelegramAdapter {
       const data = await response.json();
 
       if (data.success) {
-        // Strip characters that break Telegram's Markdown parser
         const stripMd = (str: string) => str.replace(/[_*[\]`]/g, '');
         
         let summaryText = '✅ *PDF Ingested Successfully!*\n\n';
@@ -322,7 +343,7 @@ export class TelegramAdapter {
           summaryText += `\n🏷️ Tags: ${stripMd(data.topic_tags.join(', '))}`;
         }
 
-        summaryText += '\n\n_You can now ask questions about this topic!_';
+        summaryText += '\n\n_You can now quiz on this topic with_ `/quiz ' + stripMd(data.topic_id) + '`';
 
         await this.bot.sendMessage(chatId, summaryText, { parse_mode: 'Markdown' });
       } else {

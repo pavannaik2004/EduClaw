@@ -61,7 +61,7 @@ class PDFDigestResponse(BaseModel):
 
 class QuizGenRequest(BaseModel):
     course_id: str
-    topic_id: str
+    topic_id: str = "random"  # "random" picks a random topic from KB
     count: int = 3
     student_ids: list[str] | None = None
 
@@ -138,13 +138,28 @@ async def pdf_digest(req: PDFDigestRequest):
 async def quiz_gen(req: QuizGenRequest):
     """Generate MCQ quiz questions from course KB."""
     try:
+        import random
         from quiz_gen.generate import get_kb_chunks_for_topic, generate_quiz, format_quiz_for_telegram
+        from pdf_digest.ingest import get_kb_for_course
 
-        chunks = get_kb_chunks_for_topic(req.course_id, req.topic_id, f"{DATA_DIR}/memory")
+        topic_id = req.topic_id
+        topic_name = topic_id
+
+        # If "random", pick a random topic from the KB
+        if topic_id == "random":
+            kb = get_kb_for_course(req.course_id, f"{DATA_DIR}/memory")
+            if kb and kb.get("topics"):
+                chosen = random.choice(kb["topics"])
+                topic_id = chosen["topic_id"]
+                topic_name = chosen.get("topic_name", topic_id)
+            else:
+                return QuizGenResponse(success=False, error="No course material uploaded yet. Send me a PDF first!")
+
+        chunks = get_kb_chunks_for_topic(req.course_id, topic_id, f"{DATA_DIR}/memory")
         if not chunks:
-            return QuizGenResponse(success=False, error=f"No KB content found for topic {req.topic_id}")
+            return QuizGenResponse(success=False, error=f"No KB content found for topic '{topic_id}'. Use /topics to see available topics.")
 
-        questions = generate_quiz(req.topic_id, chunks, req.count)
+        questions = generate_quiz(topic_name, chunks, req.count)
         formatted = format_quiz_for_telegram(questions)
 
         return QuizGenResponse(
@@ -379,6 +394,31 @@ async def student_status(req: StudentStatusRequest):
             msg += "💡 Use `/quiz` to practice these!\n"
 
         return StudentStatusResponse(success=True, status_message=msg)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/skill/topics/{course_id}")
+async def list_topics(course_id: str):
+    """List all available topics in a course KB."""
+    try:
+        from pdf_digest.ingest import get_kb_for_course
+
+        kb = get_kb_for_course(course_id, f"{DATA_DIR}/memory")
+        if not kb or not kb.get("topics"):
+            return {"success": False, "topics": [], "error": "No topics found. Upload a PDF first!"}
+
+        topics = [
+            {
+                "topic_id": t["topic_id"],
+                "topic_name": t.get("topic_name", t["topic_id"]),
+                "source_file": t.get("source_file", "Unknown"),
+                "summary_count": len(t.get("summary_points", [])),
+                "chunk_count": len(t.get("raw_chunks", [])),
+            }
+            for t in kb["topics"]
+        ]
+        return {"success": True, "topics": topics, "count": len(topics)}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
