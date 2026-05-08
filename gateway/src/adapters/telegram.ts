@@ -1,13 +1,16 @@
 /**
  * EduClaw Gateway — Telegram Bot Adapter
- * Handles all Telegram messaging through the Bot API.
- * Features: Menu commands, inline keyboards, PDF upload, quiz, doubts.
+ * Multi-course support: each user has an active course stored in their YAML profile.
+ * PDF uploads go to the active course; users can switch courses anytime.
  */
 
 import TelegramBot from 'node-telegram-bot-api';
-import type { MessageEnvelope, AgentResponse, QuizPayload } from '../types/MessageEnvelope.js';
+import type { QuizPayload } from '../types/MessageEnvelope.js';
 import * as fs from 'fs';
 import * as path from 'path';
+
+// Pending state for multi-step flows (in-memory, resets on restart)
+const pendingNewCourse: Map<number, { stage: string; course_id?: string }> = new Map();
 
 export class TelegramAdapter {
   private bot: TelegramBot;
@@ -21,28 +24,40 @@ export class TelegramAdapter {
     console.log('🤖 EduClaw Telegram bot started (polling mode)');
   }
 
-  /**
-   * Register bot commands — these show up in Telegram's menu button (☰).
-   */
-  private async registerCommands(): Promise<void> {
+  // ── Helpers ───────────────────────────────────────────────────────────────
+
+  private strip(str: string): string {
+    return str.replace(/[_*[\]`]/g, '').trim();
+  }
+
+  private truncate(str: string, len: number): string {
+    const s = this.strip(str);
+    return s.length > len ? s.substring(0, len - 1) + '…' : s;
+  }
+
+  /** Get the active course_id for a user (from their profile). */
+  private async getActiveCourse(userId: string): Promise<string> {
     try {
-      await this.bot.setMyCommands([
-        { command: 'start', description: '👋 Welcome & onboarding' },
-        { command: 'help', description: '❓ Show all commands' },
-        { command: 'quiz', description: '📝 Take a quiz (random topic)' },
-        { command: 'topics', description: '📋 List all available topics' },
-        { command: 'status', description: '📊 Your quiz scores & stats' },
-        { command: 'deadlines', description: '📅 Upcoming deadlines' },
-      ]);
-      console.log('✅ Bot menu commands registered');
-    } catch (err) {
-      console.error('Failed to register commands:', err);
+      const res = await fetch(`${this.skillsRuntimeUrl}/skill/active_course/telegram_${userId}`);
+      const data = await res.json();
+      return data.active_course || 'networks_2024';
+    } catch {
+      return 'networks_2024';
     }
   }
 
-  // ── Inline Keyboard Helpers ───────────────────────────────────────────────
+  /** Set active course for a user. */
+  private async setActiveCourse(userId: string, courseId: string): Promise<void> {
+    await fetch(`${this.skillsRuntimeUrl}/skill/set_active_course`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ student_id: `telegram_${userId}`, course_id: courseId }),
+    });
+  }
 
-  private mainMenuKeyboard(): TelegramBot.InlineKeyboardMarkup {
+  // ── Inline Keyboards ──────────────────────────────────────────────────────
+
+  private mainMenu(): TelegramBot.InlineKeyboardMarkup {
     return {
       inline_keyboard: [
         [
@@ -54,467 +69,452 @@ export class TelegramAdapter {
           { text: '📅 Deadlines', callback_data: 'action_deadlines' },
         ],
         [
+          { text: '📚 Switch Course', callback_data: 'action_courses' },
           { text: '❓ Help', callback_data: 'action_help' },
         ],
       ],
     };
   }
 
-  private topicQuizKeyboard(topics: any[]): TelegramBot.InlineKeyboardMarkup {
-    // Build rows of 2 buttons each for topic selection
+  private topicKeyboard(topics: any[]): TelegramBot.InlineKeyboardMarkup {
     const rows: TelegramBot.InlineKeyboardButton[][] = [];
     for (let i = 0; i < topics.length; i += 2) {
-      const row: TelegramBot.InlineKeyboardButton[] = [];
-      row.push({
-        text: `📝 ${this.truncate(topics[i].topic_name, 25)}`,
-        callback_data: `quiz_${topics[i].topic_id.substring(0, 50)}`,
-      });
+      const row: TelegramBot.InlineKeyboardButton[] = [
+        { text: `📝 ${this.truncate(topics[i].topic_name, 22)}`, callback_data: `quiz_${topics[i].topic_id.substring(0, 50)}` },
+      ];
       if (i + 1 < topics.length) {
-        row.push({
-          text: `📝 ${this.truncate(topics[i + 1].topic_name, 25)}`,
-          callback_data: `quiz_${topics[i + 1].topic_id.substring(0, 50)}`,
-        });
+        row.push({ text: `📝 ${this.truncate(topics[i + 1].topic_name, 22)}`, callback_data: `quiz_${topics[i + 1].topic_id.substring(0, 50)}` });
       }
       rows.push(row);
     }
-    // Add "Random" button at the bottom
-    rows.push([{ text: '🎲 Random Topic Quiz', callback_data: 'action_quiz_random' }]);
+    rows.push([{ text: '🎲 Random Topic', callback_data: 'action_quiz_random' }]);
+    rows.push([{ text: '⬅️ Back', callback_data: 'action_main_menu' }]);
     return { inline_keyboard: rows };
   }
 
-  private truncate(str: string, len: number): string {
-    const clean = str.replace(/[_*[\]`]/g, '');
-    return clean.length > len ? clean.substring(0, len - 1) + '…' : clean;
+  private courseKeyboard(courses: any[]): TelegramBot.InlineKeyboardMarkup {
+    const rows: TelegramBot.InlineKeyboardButton[][] = courses.map((c) => [{
+      text: `📚 ${this.truncate(c.course_name, 30)} (${c.topic_count} topics)`,
+      callback_data: `switch_${c.course_id}`,
+    }]);
+    rows.push([{ text: '➕ Add New Course', callback_data: 'action_new_course' }]);
+    rows.push([{ text: '⬅️ Back', callback_data: 'action_main_menu' }]);
+    return { inline_keyboard: rows };
+  }
+
+  // ── Command Registration ──────────────────────────────────────────────────
+
+  private async registerCommands(): Promise<void> {
+    try {
+      await this.bot.setMyCommands([
+        { command: 'start', description: '👋 Welcome & onboarding' },
+        { command: 'help', description: '❓ Show all commands' },
+        { command: 'quiz', description: '📝 Take a quiz (random topic)' },
+        { command: 'topics', description: '📋 List topics in active course' },
+        { command: 'courses', description: '📚 List & switch courses' },
+        { command: 'status', description: '📊 Your quiz scores & stats' },
+        { command: 'deadlines', description: '📅 Upcoming deadlines' },
+        { command: 'newcourse', description: '➕ Add a new course' },
+      ]);
+      console.log('✅ Bot menu commands registered');
+    } catch (err) {
+      console.error('Failed to register commands:', err);
+    }
   }
 
   // ── Handler Setup ─────────────────────────────────────────────────────────
 
   private setupHandlers(): void {
-    // Handle /start command
-    this.bot.onText(/\/start/, async (msg) => {
-      await this.handleOnboarding(msg);
-    });
+    this.bot.onText(/\/start/, (msg) => this.handleOnboarding(msg));
+    this.bot.onText(/\/help/, (msg) => this.handleHelp(msg.chat.id));
+    this.bot.onText(/\/topics/, (msg) => this.handleTopics(msg.chat.id, String(msg.from?.id)));
+    this.bot.onText(/\/courses/, (msg) => this.handleCourses(msg.chat.id));
+    this.bot.onText(/\/quiz\s*(.*)/, (msg, match) => this.handleQuiz(msg.chat.id, String(msg.from?.id), match?.[1] || ''));
+    this.bot.onText(/\/deadlines?/, (msg) => this.handleDeadlines(msg.chat.id, String(msg.from?.id)));
+    this.bot.onText(/\/status/, (msg) => this.handleStatus(msg.chat.id, String(msg.from?.id)));
+    this.bot.onText(/\/newcourse/, (msg) => this.startNewCourseFlow(msg.chat.id));
 
-    // Handle /help command
-    this.bot.onText(/\/help/, async (msg) => {
-      await this.handleHelp(msg.chat.id);
-    });
-
-    // Handle /topics command
-    this.bot.onText(/\/topics/, async (msg) => {
-      await this.handleListTopics(msg.chat.id);
-    });
-
-    // Handle /quiz command
-    this.bot.onText(/\/quiz\s*(.*)/, async (msg, match) => {
-      await this.handleQuiz(msg.chat.id, match?.[1] || '');
-    });
-
-    // Handle /deadlines command
-    this.bot.onText(/\/deadlines?/, async (msg) => {
-      await this.handleDeadlines(msg.chat.id, String(msg.from?.id));
-    });
-
-    // Handle /status command
-    this.bot.onText(/\/status/, async (msg) => {
-      await this.handleStatus(msg.chat.id, String(msg.from?.id));
-    });
-
-    // Handle inline keyboard button taps
-    this.bot.on('callback_query', async (query) => {
-      await this.handleCallbackQuery(query);
-    });
-
-    // Handle PDF document uploads
-    this.bot.on('document', async (msg) => {
-      await this.handleDocumentUpload(msg);
-    });
-
-    // Handle all other text messages (doubt answering)
+    this.bot.on('callback_query', (q) => this.handleCallback(q));
+    this.bot.on('document', (msg) => this.handlePdfUpload(msg));
     this.bot.on('message', async (msg) => {
-      if (!msg.text || !msg.from) return;
-      if (msg.text.startsWith('/')) return;
-      await this.handleDoubt(msg);
+      if (!msg.text || !msg.from || msg.text.startsWith('/')) return;
+      // Check if user is in a new-course creation flow
+      if (pendingNewCourse.has(msg.chat.id)) {
+        await this.handleNewCourseInput(msg);
+      } else {
+        await this.handleDoubt(msg);
+      }
     });
   }
 
-  // ── Callback Query Handler (Button Taps) ──────────────────────────────────
+  // ── Callback Handler ──────────────────────────────────────────────────────
 
-  private async handleCallbackQuery(query: TelegramBot.CallbackQuery): Promise<void> {
+  private async handleCallback(query: TelegramBot.CallbackQuery): Promise<void> {
     const chatId = query.message?.chat.id;
     const userId = String(query.from.id);
     const data = query.data || '';
-
     if (!chatId) return;
-
-    // Acknowledge the button press immediately
     await this.bot.answerCallbackQuery(query.id);
 
-    if (data === 'action_quiz_random') {
-      await this.handleQuiz(chatId, '');
-    } else if (data === 'action_topics') {
-      await this.handleListTopics(chatId);
-    } else if (data === 'action_status') {
-      await this.handleStatus(chatId, userId);
-    } else if (data === 'action_deadlines') {
-      await this.handleDeadlines(chatId, userId);
-    } else if (data === 'action_help') {
-      await this.handleHelp(chatId);
-    } else if (data === 'action_pick_topic') {
-      await this.handleTopicPicker(chatId);
-    } else if (data.startsWith('quiz_')) {
-      const topicId = data.replace('quiz_', '');
-      await this.handleQuiz(chatId, topicId);
-    }
-  }
-
-  // ── Command Handlers ──────────────────────────────────────────────────────
-
-  private async handleOnboarding(msg: TelegramBot.Message): Promise<void> {
-    const chatId = msg.chat.id;
-    const name = msg.from?.first_name || 'Student';
-
-    await this.bot.sendMessage(
-      chatId,
-      `👋 Welcome to *EduClaw*, ${name}!\n\n` +
-        "I'm your AI-powered academic assistant.\n\n" +
-        '📄 *Upload a PDF* to add course material\n' +
-        '📚 *Ask any question* and I\'ll answer from your notes\n' +
-        '📝 *Take quizzes* to test your knowledge\n' +
-        '📅 *Track deadlines* and weak topics\n\n' +
-        'Tap a button below to get started! 👇',
-      {
-        parse_mode: 'Markdown',
-        reply_markup: this.mainMenuKeyboard(),
-      }
-    );
-
-    console.log(`📥 New user onboarded: ${name} (${msg.from?.id})`);
-  }
-
-  private async handleHelp(chatId: number): Promise<void> {
-    await this.bot.sendMessage(
-      chatId,
-      '🦞 *EduClaw — Your Academic Assistant*\n\n' +
-        '*Commands:*\n' +
-        '📝 `/quiz` — Random topic quiz\n' +
-        '📋 `/topics` — See all topics & pick one for quiz\n' +
-        '📊 `/status` — Your quiz scores & stats\n' +
-        '📅 `/deadlines` — Upcoming deadlines\n' +
-        '📄 Send a PDF — Add course material\n' +
-        '💬 Type any question — Get answers from your notes\n\n' +
-        '_Or just tap a button below!_ 👇',
-      {
-        parse_mode: 'Markdown',
-        reply_markup: this.mainMenuKeyboard(),
-      }
-    );
-  }
-
-  private async handleListTopics(chatId: number): Promise<void> {
-    await this.bot.sendChatAction(chatId, 'typing');
-
-    try {
-      const response = await fetch(`${this.skillsRuntimeUrl}/skill/topics/networks_2024`);
-      const data = await response.json();
-
-      if (data.success && data.topics && data.topics.length > 0) {
-        const stripMd = (str: string) => str.replace(/[_*[\]`]/g, ' ').trim();
-
-        let text = `📋 *Available Topics (${data.count})*\n\n`;
-        data.topics.forEach((t: any, i: number) => {
-          text += `${i + 1}. *${stripMd(t.topic_name)}*\n`;
-          text += `   📄 ${stripMd(t.source_file)}\n\n`;
-        });
-        text += '_Tap a topic below to take a quiz on it:_';
-
-        await this.bot.sendMessage(chatId, text, {
-          parse_mode: 'Markdown',
-          reply_markup: this.topicQuizKeyboard(data.topics),
-        });
-      } else {
-        await this.bot.sendMessage(
-          chatId,
-          '📋 No topics available yet.\n\n📄 Send me a PDF to get started!',
-          { reply_markup: this.mainMenuKeyboard() }
-        );
-      }
-    } catch (err) {
-      console.error('Topics handler error:', err);
-      await this.bot.sendMessage(chatId, '⚠️ Could not fetch topics.');
-    }
-  }
-
-  private async handleTopicPicker(chatId: number): Promise<void> {
-    // Same as handleListTopics but specifically for quiz picking
-    await this.handleListTopics(chatId);
-  }
-
-  private async handleDoubt(msg: TelegramBot.Message): Promise<void> {
-    const chatId = msg.chat.id;
-    const userId = String(msg.from?.id);
-
-    await this.bot.sendChatAction(chatId, 'typing');
-
-    try {
-      const response = await fetch(`${this.skillsRuntimeUrl}/skill/doubt`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          student_id: `telegram_${userId}`,
-          course_id: 'networks_2024',
-          question: msg.text,
-        }),
-      });
-
-      const data = await response.json();
-
-      if (data.success) {
-        await this.bot.sendMessage(
-          chatId,
-          `🧠 *Answer:*\n\n${data.answer}`,
-          {
-            parse_mode: 'Markdown',
-            reply_to_message_id: msg.message_id,
-            reply_markup: {
-              inline_keyboard: [
-                [
-                  { text: '📝 Quiz Me', callback_data: 'action_quiz_random' },
-                  { text: '📋 More Topics', callback_data: 'action_topics' },
-                ],
-              ],
-            },
-          }
-        );
-      } else {
-        await this.bot.sendMessage(
-          chatId,
-          `⚠️ ${data.error || "I couldn't find relevant course material for that question."}`,
-          { reply_to_message_id: msg.message_id }
-        );
-      }
-    } catch (err) {
-      console.error('Doubt handler error:', err);
-      await this.bot.sendMessage(
-        chatId,
-        '⚠️ Something went wrong. Please try again in a moment.',
-        { reply_to_message_id: msg.message_id }
+    if (data === 'action_quiz_random')  await this.handleQuiz(chatId, userId, '');
+    else if (data === 'action_topics')  await this.handleTopics(chatId, userId);
+    else if (data === 'action_courses') await this.handleCourses(chatId);
+    else if (data === 'action_status')  await this.handleStatus(chatId, userId);
+    else if (data === 'action_deadlines') await this.handleDeadlines(chatId, userId);
+    else if (data === 'action_help')    await this.handleHelp(chatId);
+    else if (data === 'action_main_menu') await this.sendMainMenu(chatId);
+    else if (data === 'action_new_course') await this.startNewCourseFlow(chatId);
+    else if (data.startsWith('quiz_')) await this.handleQuiz(chatId, userId, data.replace('quiz_', ''));
+    else if (data.startsWith('switch_')) {
+      const courseId = data.replace('switch_', '');
+      await this.setActiveCourse(userId, courseId);
+      const res = await fetch(`${this.skillsRuntimeUrl}/skill/courses`);
+      const d = await res.json();
+      const c = d.courses?.find((x: any) => x.course_id === courseId);
+      await this.bot.sendMessage(chatId,
+        `✅ Switched to *${c?.course_name || courseId}*!\n\nAll questions, quizzes, and PDF uploads will now use this course.`,
+        { parse_mode: 'Markdown', reply_markup: this.mainMenu() }
       );
     }
   }
 
-  private async handleQuiz(chatId: number, topicArg: string): Promise<void> {
-    const trimmed = topicArg.trim();
+  // ── Onboarding ────────────────────────────────────────────────────────────
 
-    // If user typed "/quiz list", show topic picker
-    if (trimmed === 'list') {
-      await this.handleListTopics(chatId);
-      return;
-    }
+  private async handleOnboarding(msg: TelegramBot.Message): Promise<void> {
+    const name = msg.from?.first_name || 'Student';
+    await this.bot.sendMessage(msg.chat.id,
+      `👋 Welcome to *EduClaw*, ${name}!\n\n` +
+      `I'm your AI-powered academic assistant.\n\n` +
+      `📄 *Upload a PDF* → I'll summarise it into your active course\n` +
+      `📝 *Ask any question* → I'll answer from your course notes\n` +
+      `📚 *Multiple courses* → Switch with \`/courses\`\n\n` +
+      `Tap a button to get started! 👇`,
+      { parse_mode: 'Markdown', reply_markup: this.mainMenu() }
+    );
+  }
 
+  private async sendMainMenu(chatId: number): Promise<void> {
+    await this.bot.sendMessage(chatId, '🏠 Main Menu:', { reply_markup: this.mainMenu() });
+  }
+
+  private async handleHelp(chatId: number): Promise<void> {
+    await this.bot.sendMessage(chatId,
+      `🦞 *EduClaw Commands*\n\n` +
+      `/quiz — Random topic quiz\n` +
+      `/topics — Topics in active course\n` +
+      `/courses — List & switch courses\n` +
+      `/newcourse — Add a new course\n` +
+      `/status — Your scores & stats\n` +
+      `/deadlines — Upcoming deadlines\n` +
+      `📄 *Send a PDF* — Adds to active course\n` +
+      `💬 *Type a question* — Doubt answering\n`,
+      { parse_mode: 'Markdown', reply_markup: this.mainMenu() }
+    );
+  }
+
+  // ── Course Management ─────────────────────────────────────────────────────
+
+  private async handleCourses(chatId: number): Promise<void> {
     await this.bot.sendChatAction(chatId, 'typing');
-
     try {
-      const topicId = trimmed || 'random';
+      const res = await fetch(`${this.skillsRuntimeUrl}/skill/courses`);
+      const data = await res.json();
 
-      const response = await fetch(`${this.skillsRuntimeUrl}/skill/quiz_gen`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          course_id: 'networks_2024',
-          topic_id: topicId,
-          count: 3,
-        }),
+      if (!data.courses || data.courses.length === 0) {
+        await this.bot.sendMessage(chatId,
+          `📚 No courses yet!\n\nTap *Add New Course* to create one, then send me a PDF.`,
+          { parse_mode: 'Markdown', reply_markup: this.courseKeyboard([]) }
+        );
+        return;
+      }
+
+      let text = `📚 *Your Courses (${data.count})*\n\nTap to switch active course:\n`;
+      await this.bot.sendMessage(chatId, text, {
+        parse_mode: 'Markdown',
+        reply_markup: this.courseKeyboard(data.courses),
       });
+    } catch (err) {
+      await this.bot.sendMessage(chatId, '⚠️ Could not fetch courses.');
+    }
+  }
 
-      const data = await response.json();
+  private async startNewCourseFlow(chatId: number): Promise<void> {
+    pendingNewCourse.set(chatId, { stage: 'awaiting_name' });
+    await this.bot.sendMessage(chatId,
+      `➕ *Add New Course*\n\nWhat is the *full name* of the course?\n_(e.g. "Operating Systems", "Data Structures & Algorithms")_`,
+      { parse_mode: 'Markdown' }
+    );
+  }
 
-      if (data.success && data.questions) {
-        await this.bot.sendMessage(chatId, '📝 *Quiz Time!*\n\nHere are your 3 questions:', {
-          parse_mode: 'Markdown',
-        });
+  private async handleNewCourseInput(msg: TelegramBot.Message): Promise<void> {
+    const chatId = msg.chat.id;
+    const userId = String(msg.from?.id);
+    const state = pendingNewCourse.get(chatId);
+    if (!state) return;
 
-        for (const q of data.questions) {
-          await this.bot.sendPoll(chatId, q.question, q.options, {
-            type: 'quiz',
-            correct_option_id: q.correct_index,
-            explanation: q.explanation,
-            is_anonymous: false,
-          });
-        }
+    if (state.stage === 'awaiting_name') {
+      const courseName = msg.text!.trim();
+      // Auto-generate a slug from the name
+      const courseId = courseName.toLowerCase()
+        .replace(/[^a-z0-9 ]/g, '')
+        .trim()
+        .replace(/\s+/g, '_')
+        .substring(0, 30) + '_' + new Date().getFullYear();
 
-        // After quiz, show quick action buttons
-        await this.bot.sendMessage(chatId, '_What\'s next?_', {
+      pendingNewCourse.set(chatId, { stage: 'confirming', course_id: courseId });
+
+      await this.bot.sendMessage(chatId,
+        `📚 Create course:\n*${courseName}*\nID: \`${courseId}\`\n\nConfirm?`,
+        {
           parse_mode: 'Markdown',
           reply_markup: {
             inline_keyboard: [
               [
-                { text: '🔄 Another Quiz', callback_data: 'action_quiz_random' },
-                { text: '📋 Pick Topic', callback_data: 'action_pick_topic' },
+                { text: '✅ Yes, Create', callback_data: `switch_${courseId}` },
+                { text: '❌ Cancel', callback_data: 'action_main_menu' },
               ],
-              [
-                { text: '📊 My Status', callback_data: 'action_status' },
-              ],
+            ],
+          },
+        }
+      );
+
+      // Actually create the course now
+      await fetch(`${this.skillsRuntimeUrl}/skill/create_course`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ course_id: courseId, course_name: courseName }),
+      });
+
+      pendingNewCourse.delete(chatId);
+    }
+  }
+
+  // ── Topics ────────────────────────────────────────────────────────────────
+
+  private async handleTopics(chatId: number, userId: string): Promise<void> {
+    await this.bot.sendChatAction(chatId, 'typing');
+    const courseId = await this.getActiveCourse(userId);
+    try {
+      const res = await fetch(`${this.skillsRuntimeUrl}/skill/topics/${courseId}`);
+      const data = await res.json();
+
+      if (!data.success || !data.topics || data.topics.length === 0) {
+        await this.bot.sendMessage(chatId,
+          `📋 No topics in *${this.strip(courseId)}* yet.\n\n📄 Send me a PDF to add course material!`,
+          { parse_mode: 'Markdown', reply_markup: this.mainMenu() }
+        );
+        return;
+      }
+
+      let text = `📋 *Topics in ${this.strip(courseId)} (${data.count})*\n\nTap any topic to take a quiz:\n`;
+      await this.bot.sendMessage(chatId, text, {
+        parse_mode: 'Markdown',
+        reply_markup: this.topicKeyboard(data.topics),
+      });
+    } catch (err) {
+      await this.bot.sendMessage(chatId, '⚠️ Could not fetch topics.');
+    }
+  }
+
+  // ── Quiz ──────────────────────────────────────────────────────────────────
+
+  private async handleQuiz(chatId: number, userId: string, topicArg: string): Promise<void> {
+    if (topicArg.trim() === 'list') { await this.handleTopics(chatId, userId); return; }
+
+    await this.bot.sendChatAction(chatId, 'typing');
+    const courseId = await this.getActiveCourse(userId);
+    const topicId = topicArg.trim() || 'random';
+
+    try {
+      const res = await fetch(`${this.skillsRuntimeUrl}/skill/quiz_gen`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ course_id: courseId, topic_id: topicId, count: 3 }),
+      });
+      const data = await res.json();
+
+      if (data.success && data.questions) {
+        await this.bot.sendMessage(chatId, '📝 *Quiz Time!* — 3 questions:', { parse_mode: 'Markdown' });
+        for (const q of data.questions) {
+          await this.bot.sendPoll(chatId, q.question, q.options, {
+            type: 'quiz', correct_option_id: q.correct_index,
+            explanation: q.explanation, is_anonymous: false,
+          });
+        }
+        await this.bot.sendMessage(chatId, `_Active course: *${this.strip(courseId)}*_ — What\'s next?`, {
+          parse_mode: 'Markdown',
+          reply_markup: {
+            inline_keyboard: [
+              [{ text: '🔄 Another Quiz', callback_data: 'action_quiz_random' }, { text: '📋 Pick Topic', callback_data: 'action_topics' }],
+              [{ text: '📊 My Status', callback_data: 'action_status' }, { text: '📚 Switch Course', callback_data: 'action_courses' }],
             ],
           },
         });
       } else {
-        await this.bot.sendMessage(
-          chatId,
-          `⚠️ ${data.error || 'Could not generate quiz.'}`,
-          { reply_markup: this.mainMenuKeyboard() }
+        await this.bot.sendMessage(chatId,
+          `⚠️ ${data.error || 'Could not generate quiz.'}\n\nUse /topics to see available topics.`,
+          { reply_markup: this.mainMenu() }
         );
       }
     } catch (err) {
-      console.error('Quiz handler error:', err);
       await this.bot.sendMessage(chatId, '⚠️ Quiz generation failed. Please try again.');
     }
   }
 
-  private async handleDeadlines(chatId: number, userId: string): Promise<void> {
+  // ── Doubt Answering ───────────────────────────────────────────────────────
+
+  private async handleDoubt(msg: TelegramBot.Message): Promise<void> {
+    const chatId = msg.chat.id;
+    const userId = String(msg.from?.id);
     await this.bot.sendChatAction(chatId, 'typing');
+    const courseId = await this.getActiveCourse(userId);
 
     try {
-      const response = await fetch(`${this.skillsRuntimeUrl}/skill/deadlines`, {
+      const res = await fetch(`${this.skillsRuntimeUrl}/skill/doubt`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          course_id: 'networks_2024',
-          student_id: `telegram_${userId}`,
-        }),
+        body: JSON.stringify({ student_id: `telegram_${userId}`, course_id: courseId, question: msg.text }),
       });
+      const data = await res.json();
 
-      const data = await response.json();
-
-      if (data.success && data.message) {
-        await this.bot.sendMessage(chatId, data.message, {
+      if (data.success) {
+        await this.bot.sendMessage(chatId, `🧠 *Answer:*\n\n${data.answer}`, {
           parse_mode: 'Markdown',
-          reply_markup: this.mainMenuKeyboard(),
+          reply_to_message_id: msg.message_id,
+          reply_markup: {
+            inline_keyboard: [[
+              { text: '📝 Quiz Me', callback_data: 'action_quiz_random' },
+              { text: '📋 Topics', callback_data: 'action_topics' },
+            ]],
+          },
         });
       } else {
-        await this.bot.sendMessage(chatId, '⚠️ Could not check deadlines.');
+        await this.bot.sendMessage(chatId,
+          `⚠️ ${data.error || "Couldn't find that in your course notes."}`,
+          { reply_to_message_id: msg.message_id }
+        );
       }
-    } catch (err) {
-      console.error('Deadline handler error:', err);
+    } catch {
+      await this.bot.sendMessage(chatId, '⚠️ Something went wrong. Please try again.');
+    }
+  }
+
+  // ── Deadlines & Status ────────────────────────────────────────────────────
+
+  private async handleDeadlines(chatId: number, userId: string): Promise<void> {
+    await this.bot.sendChatAction(chatId, 'typing');
+    const courseId = await this.getActiveCourse(userId);
+    try {
+      const res = await fetch(`${this.skillsRuntimeUrl}/skill/deadlines`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ course_id: courseId, student_id: `telegram_${userId}` }),
+      });
+      const data = await res.json();
+      await this.bot.sendMessage(chatId, data.message || '⚠️ Could not check deadlines.', {
+        parse_mode: 'Markdown', reply_markup: this.mainMenu(),
+      });
+    } catch {
       await this.bot.sendMessage(chatId, '⚠️ Could not fetch deadline info.');
     }
   }
 
   private async handleStatus(chatId: number, userId: string): Promise<void> {
     await this.bot.sendChatAction(chatId, 'typing');
-
+    const courseId = await this.getActiveCourse(userId);
     try {
-      const response = await fetch(`${this.skillsRuntimeUrl}/skill/student_status`, {
+      const res = await fetch(`${this.skillsRuntimeUrl}/skill/student_status`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          student_id: `telegram_${userId}`,
-          course_id: 'networks_2024',
-        }),
+        body: JSON.stringify({ student_id: `telegram_${userId}`, course_id: courseId }),
       });
-
-      const data = await response.json();
-
-      if (data.success && data.status_message) {
-        await this.bot.sendMessage(chatId, data.status_message, {
-          parse_mode: 'Markdown',
-          reply_markup: this.mainMenuKeyboard(),
-        });
-      } else {
-        await this.bot.sendMessage(chatId, '⚠️ Could not fetch your status.');
-      }
-    } catch (err) {
-      console.error('Status handler error:', err);
+      const data = await res.json();
+      await this.bot.sendMessage(chatId, data.status_message || '⚠️ Could not fetch status.', {
+        parse_mode: 'Markdown', reply_markup: this.mainMenu(),
+      });
+    } catch {
       await this.bot.sendMessage(chatId, '⚠️ Could not fetch your status.');
     }
   }
 
-  private async handleDocumentUpload(msg: TelegramBot.Message): Promise<void> {
+  // ── PDF Upload ────────────────────────────────────────────────────────────
+
+  private async handlePdfUpload(msg: TelegramBot.Message): Promise<void> {
     const chatId = msg.chat.id;
+    const userId = String(msg.from?.id);
     const doc = msg.document;
 
     if (!doc || !doc.file_name?.toLowerCase().endsWith('.pdf')) {
-      await this.bot.sendMessage(chatId, '📄 I can only process PDF files. Please send a PDF document.');
+      await this.bot.sendMessage(chatId, '📄 Please send a PDF file.');
       return;
     }
 
-    await this.bot.sendMessage(chatId, `📥 Received *${doc.file_name}*. Processing...`, {
-      parse_mode: 'Markdown',
-    });
+    const courseId = await this.getActiveCourse(userId);
+    await this.bot.sendMessage(chatId,
+      `📥 Received *${doc.file_name}*\n📚 Adding to course: *${this.strip(courseId)}*\n\n_Processing..._`,
+      { parse_mode: 'Markdown' }
+    );
     await this.bot.sendChatAction(chatId, 'typing');
 
     try {
       const fileLink = await this.bot.getFileLink(doc.file_id);
-      const fileResponse = await fetch(fileLink);
-      const fileBuffer = Buffer.from(await fileResponse.arrayBuffer());
+      const fileBuffer = Buffer.from(await (await fetch(fileLink)).arrayBuffer());
 
-      const inboxDir = path.resolve('..', 'data', 'inbox', 'networks_2024');
+      const inboxDir = path.resolve('..', 'data', 'inbox', courseId);
       fs.mkdirSync(inboxDir, { recursive: true });
-
       const filePath = path.join(inboxDir, doc.file_name!);
       fs.writeFileSync(filePath, fileBuffer);
 
-      console.log(`📄 PDF saved: ${filePath}`);
-
-      const response = await fetch(`${this.skillsRuntimeUrl}/skill/pdf_digest`, {
+      const res = await fetch(`${this.skillsRuntimeUrl}/skill/pdf_digest`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          course_id: 'networks_2024',
+          course_id: courseId,
           pdf_path: filePath,
           topic_name: doc.file_name!.replace('.pdf', '').replace(/[_-]/g, ' '),
         }),
       });
-
-      const data = await response.json();
+      const data = await res.json();
 
       if (data.success) {
-        const stripMd = (str: string) => str.replace(/[_*[\]`]/g, '');
-        const topicId = stripMd(data.topic_id);
-
-        let summaryText = '✅ *PDF Ingested Successfully!*\n\n';
-        summaryText += `📚 Topic: *${topicId}*\n\n`;
-
-        if (data.summary_points && data.summary_points.length > 0) {
-          summaryText += '*Key Points:*\n';
-          data.summary_points.forEach((point: string, i: number) => {
-            summaryText += `${i + 1}. ${stripMd(point)}\n`;
-          });
+        const topicId = this.strip(data.topic_id);
+        let text = `✅ *PDF Added to ${this.strip(courseId)}!*\n\n`;
+        text += `📚 Topic: *${topicId}*\n\n`;
+        if (data.summary_points?.length) {
+          text += `*Key Points:*\n`;
+          data.summary_points.forEach((p: string, i: number) => { text += `${i + 1}. ${this.strip(p)}\n`; });
         }
+        if (data.topic_tags?.length) text += `\n🏷️ ${this.strip(data.topic_tags.join(', '))}`;
+        text += '\n\n_Tap below to continue!_';
 
-        if (data.topic_tags && data.topic_tags.length > 0) {
-          summaryText += `\n🏷️ Tags: ${stripMd(data.topic_tags.join(', '))}`;
-        }
-
-        summaryText += '\n\n_Tap a button below to continue!_';
-
-        await this.bot.sendMessage(chatId, summaryText, {
+        await this.bot.sendMessage(chatId, text, {
           parse_mode: 'Markdown',
           reply_markup: {
             inline_keyboard: [
               [
-                { text: `📝 Quiz: ${this.truncate(topicId, 20)}`, callback_data: `quiz_${data.topic_id.substring(0, 50)}` },
+                { text: `📝 Quiz: ${this.truncate(data.topic_id, 18)}`, callback_data: `quiz_${data.topic_id.substring(0, 50)}` },
                 { text: '🎲 Random Quiz', callback_data: 'action_quiz_random' },
               ],
               [
                 { text: '📋 All Topics', callback_data: 'action_topics' },
-                { text: '📊 My Status', callback_data: 'action_status' },
+                { text: '📚 Courses', callback_data: 'action_courses' },
               ],
             ],
           },
         });
       } else {
-        await this.bot.sendMessage(
-          chatId,
-          `⚠️ Failed to process PDF: ${data.error || 'Unknown error'}\n\nMake sure the PDF contains readable text (not a scanned image).`,
-          { reply_markup: this.mainMenuKeyboard() }
+        await this.bot.sendMessage(chatId,
+          `⚠️ Failed: ${data.error || 'Unknown error'}\n\nMake sure the PDF has readable text (not a scanned image).`,
+          { reply_markup: this.mainMenu() }
         );
       }
     } catch (err) {
-      console.error('Document upload error:', err);
+      console.error('PDF upload error:', err);
       await this.bot.sendMessage(chatId, '⚠️ Failed to process the PDF. Please try again.');
     }
   }
+
+  // ── Public helpers for scheduled broadcasts ───────────────────────────────
 
   async sendMessage(chatId: string, text: string): Promise<void> {
     await this.bot.sendMessage(chatId, text, { parse_mode: 'Markdown' });
@@ -522,10 +522,8 @@ export class TelegramAdapter {
 
   async sendQuiz(chatId: string, quiz: QuizPayload): Promise<void> {
     await this.bot.sendPoll(chatId, quiz.question, quiz.options, {
-      type: 'quiz',
-      correct_option_id: quiz.correct_index,
-      explanation: quiz.explanation,
-      is_anonymous: false,
+      type: 'quiz', correct_option_id: quiz.correct_index,
+      explanation: quiz.explanation, is_anonymous: false,
     });
   }
 }

@@ -423,8 +423,132 @@ async def list_topics(course_id: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.get("/skill/courses")
+async def list_courses():
+    """List all courses that have a KB or schedule YAML."""
+    try:
+        courses_dir = Path(f"{DATA_DIR}/memory/courses")
+        if not courses_dir.exists():
+            return {"success": True, "courses": []}
+
+        courses = []
+        for course_dir in sorted(courses_dir.iterdir()):
+            if not course_dir.is_dir():
+                continue
+            kb_path = course_dir / "kb.yaml"
+            sched_path = course_dir / "schedule.yaml"
+
+            topic_count = 0
+            course_name = course_dir.name
+            if kb_path.exists():
+                import yaml
+                with open(kb_path) as f:
+                    kb = yaml.safe_load(f)
+                if kb:
+                    topic_count = len(kb.get("topics", []))
+                    course_name = kb.get("course_name", course_dir.name)
+
+            courses.append({
+                "course_id": course_dir.name,
+                "course_name": course_name,
+                "topic_count": topic_count,
+                "has_schedule": sched_path.exists(),
+            })
+
+        return {"success": True, "courses": courses, "count": len(courses)}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+class CreateCourseRequest(BaseModel):
+    course_id: str       # slug like "os_2024" or "dsa_sem4"
+    course_name: str     # human name like "Operating Systems"
+
+
+@app.post("/skill/create_course")
+async def create_course(req: CreateCourseRequest):
+    """Create a new course folder with an empty KB. Idempotent."""
+    try:
+        import yaml
+        from datetime import datetime
+
+        course_dir = Path(f"{DATA_DIR}/memory/courses/{req.course_id}")
+        course_dir.mkdir(parents=True, exist_ok=True)
+
+        kb_path = course_dir / "kb.yaml"
+        if not kb_path.exists():
+            kb = {
+                "course_id": req.course_id,
+                "course_name": req.course_name,
+                "created_at": datetime.utcnow().isoformat(),
+                "topics": [],
+            }
+            with open(kb_path, "w") as f:
+                yaml.dump(kb, f, default_flow_style=False, allow_unicode=True, sort_keys=False)
+
+        inbox_dir = Path(f"{DATA_DIR}/inbox/{req.course_id}")
+        inbox_dir.mkdir(parents=True, exist_ok=True)
+
+        return {"success": True, "course_id": req.course_id, "course_name": req.course_name}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+class SetActiveCourseRequest(BaseModel):
+    student_id: str
+    course_id: str
+
+
+@app.post("/skill/set_active_course")
+async def set_active_course(req: SetActiveCourseRequest):
+    """Set the student's currently active course."""
+    try:
+        from utils.yaml_io import read_yaml, write_yaml
+
+        profile_path = Path(f"{DATA_DIR}/memory/students/{req.student_id}.yaml")
+        profile = read_yaml(str(profile_path)) or {
+            "student_id": req.student_id,
+            "name": "Unknown",
+            "enrolled_courses": [],
+            "quiz_scores": {},
+            "doubt_log": [],
+            "weak_topics": [],
+            "subscription_active": True,
+        }
+
+        profile["active_course"] = req.course_id
+        if req.course_id not in profile.get("enrolled_courses", []):
+            profile.setdefault("enrolled_courses", []).append(req.course_id)
+
+        write_yaml(str(profile_path), profile)
+        return {"success": True, "active_course": req.course_id}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/skill/active_course/{student_id}")
+async def get_active_course(student_id: str):
+    """Get the student's currently active course."""
+    try:
+        from utils.yaml_io import read_yaml
+
+        profile_path = Path(f"{DATA_DIR}/memory/students/{student_id}.yaml")
+        profile = read_yaml(str(profile_path))
+
+        if not profile:
+            return {"success": True, "active_course": "networks_2024"}  # default fallback
+
+        active = profile.get("active_course") or (
+            profile.get("enrolled_courses", ["networks_2024"])[0]
+        )
+        return {"success": True, "active_course": active}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 if __name__ == "__main__":
     import uvicorn
 
     uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("SKILLS_RUNTIME_PORT", "8001")))
+
 
