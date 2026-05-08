@@ -83,7 +83,7 @@ Students interact with EduClaw through a Telegram bot interface. This interface 
    python scripts/seed_demo_data.py
    ```
 
-### Running the Application
+### Running the Application (Linux / Mac)
 
 You will need two terminal windows to run both services.
 
@@ -103,6 +103,26 @@ cp ../.env .env
 export SKILLS_RUNTIME_PORT=8001
 npx tsx src/index.ts
 ```
+
+### Running the Application (Windows / PowerShell)
+
+Terminal 1: Start the Skills Runtime (Python)
+```powershell
+cd skills-runtime
+$env:DATA_DIR="../data"
+$env:OPENAI_API_KEY="<your_openai_api_key>"
+$env:LLM_MODEL="gpt-4o-mini"
+.venv\Scripts\uvicorn main:app --host 0.0.0.0 --port 8001 --reload
+```
+
+Terminal 2: Start the Gateway (Telegram Bot)
+```powershell
+cd gateway
+Copy-Item ../.env .env
+$env:SKILLS_RUNTIME_PORT="8001"
+npx tsx src/index.ts
+```
+
 Note: Ensure only one instance of the Gateway is running at any time to prevent Telegram polling conflicts.
 
 ---
