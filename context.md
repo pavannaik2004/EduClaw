@@ -1,8 +1,9 @@
 # EduClaw — Project Context & Progress Tracker
 
-> **Last Updated:** 2026-05-08 12:30 IST  
+> **Last Updated:** 2026-05-08 13:30 IST  
 > **Machine:** Pavan's ASUS VivoBook (Linux/Ubuntu)  
 > **Hackathon Deadline:** 8 May 2026 EOD  
+> **GitHub:** github.com/pavannaik2004/EduClaw  
 > **Agent Handoff Doc:** Any AI agent can read this file and continue from where the last left off.
 
 ---
@@ -20,10 +21,9 @@
 
 ### Hardware Impact on Project Decisions
 
-- ❌ **Cannot run local LLMs** (no dedicated GPU, Ollama + DeepSeek-7B on CPU would be painfully slow ~5 tok/s)
-- ✅ **Use OpenAI API** for all LLM tasks (summarization, quiz gen, doubt answering)
-- ✅ **Skip the Ollama container** in docker-compose — don't start `--profile local-llm`
-- ✅ **Docker will run fine** — 16GB RAM is plenty for 2-3 containers (gateway + skills-runtime)
+- ❌ **Cannot run local LLMs** (no dedicated GPU)
+- ✅ **Use OpenAI API** for all LLM tasks
+- ✅ **Skip the Ollama container** in docker-compose
 - ✅ **Node.js + Python dev is comfortable** on this hardware
 
 ---
@@ -52,75 +52,76 @@
 | **OpenAI API Key** | ✅ Configured | In `.env` — using `gpt-4o-mini` model |
 | **LLM Provider** | **OpenAI** (NOT Anthropic) | Code was adapted from Anthropic to OpenAI |
 | **LLM Model** | `gpt-4o-mini` | Set in `.env` as `LLM_MODEL` |
-| **SendGrid** | ⬜ Not needed for demo | Skipped |
 
 > **IMPORTANT:** Original Master Document references Anthropic Claude. **ALL code has been rewritten to use OpenAI API instead.** Do NOT switch back without updating `pdf_digest/ingest.py`, `quiz_gen/generate.py`, and `main.py`.
 
 ---
 
-## 4. OpenClaw Version & Details
+## 4. Architecture
 
-| Property | Value |
-|----------|-------|
-| **Framework** | OpenClaw (open-source, TypeScript-based agentic AI framework) |
-| **Variant** | OpenClaw Base (free, has Pi Engine + SOUL.md + HEARTBEAT.md + Cognitive RAM) |
-| **Key Features Used** | Pi Engine, SOUL.md (persona), HEARTBEAT.md (cron scheduler), Cognitive RAM (persistent YAML memory), Skills API, Telegram integration |
+```
+Students (Telegram) → Gateway (Node.js/TS) → Skills Runtime (Python/FastAPI)
+                            ↓                         ↓
+                   Inline Keyboards           OpenAI GPT-4o-mini
+                   Menu Commands              (Summarize/Quiz/Answer)
+                   PDF Upload                         ↓
+                                            Cognitive RAM (YAML files)
+                                            ├── courses/{id}/kb.yaml
+                                            ├── courses/{id}/schedule.yaml
+                                            └── students/{id}.yaml
+```
 
-### Architecture
-- **Gateway:** Node.js/TypeScript daemon (Telegram bot polling) → calls Skills Runtime
-- **Skills Runtime:** Python 3.12/FastAPI → exposes /skill/* endpoints
+- **Gateway:** Node.js 22/TypeScript — Telegram bot with polling, inline keyboards, menu commands
+- **Skills Runtime:** Python 3.12/FastAPI — exposes `/skill/*` endpoints
 - **LLM:** OpenAI `gpt-4o-mini` via `openai` Python SDK
-- **Memory:** YAML files (Cognitive RAM pattern)
+- **Memory:** YAML files (Cognitive RAM pattern) — one folder per course, one file per student
 - **SOUL.md:** Defines agent persona, constraints, response format
 - **HEARTBEAT.md:** Cron-like scheduler for proactive actions
 
 ---
 
-## 5. Project Structure (Actual)
+## 5. Project Structure
 
 ```
 /home/pavan/Educlaw/
-├── EduClaw_Master_Document.md     # Reference document (DO NOT MODIFY)
-├── context.md                      # THIS FILE
+├── EduClaw_Master_Document.md     # Reference doc (DO NOT MODIFY)
+├── context.md                      # THIS FILE — agent handoff
 ├── README.md                       # Hackathon submission README
 ├── AI_DISCLOSURE.md                # Required by hackathon
-├── .env.example / .env             # API keys (NEVER COMMIT .env)
+├── .env / .env.example             # API keys (NEVER COMMIT .env)
 ├── .gitignore
 ├── docker-compose.yml
 │
 ├── gateway/                        # Node.js 22 / TypeScript
-│   ├── Dockerfile
 │   ├── package.json / pnpm-lock.yaml
-│   ├── tsconfig.json
 │   └── src/
 │       ├── index.ts                # Entry point — starts Telegram bot
-│       ├── adapters/telegram.ts    # Bot: /start, /help, /quiz, doubt answering
+│       ├── adapters/telegram.ts    # Bot: all commands, buttons, PDF upload
 │       └── types/MessageEnvelope.ts
 │
 ├── pi-engine/                      # OpenClaw config
-│   ├── SOUL.md
-│   ├── HEARTBEAT.md
+│   ├── SOUL.md / HEARTBEAT.md
 │   └── skills/                     # 5 skill definitions
 │
 ├── skills-runtime/                 # Python 3.12 / FastAPI
-│   ├── Dockerfile
 │   ├── pyproject.toml
 │   ├── .venv/                      # Python venv (uv created)
-│   ├── main.py                     # FastAPI app: /health, /skill/*
-│   ├── utils/                      # logger, sanitise, yaml_io
-│   ├── pdf_digest/ingest.py        # PDF → text → chunks → summarise → YAML KB
+│   ├── main.py                     # FastAPI: /health, /skill/* (17 endpoints)
+│   ├── utils/                      # logger.py, sanitise.py, yaml_io.py
+│   ├── pdf_digest/
+│   │   ├── ingest.py               # PDF → text → chunks → summarise → YAML KB
+│   │   └── watcher.py              # Folder watcher (watchdog)
 │   ├── quiz_gen/generate.py        # KB → MCQ questions via OpenAI
+│   ├── calendar_watch/watch.py     # Deadline alerts with weak-topic warnings
 │   ├── instructor_report/generate_docx.py
-│   ├── calendar_watch/
 │   └── meeting_scribe/
 │
-├── scripts/
-│   └── seed_demo_data.py           # Creates sample course + 5 students
+├── scripts/seed_demo_data.py       # Creates sample course + 5 students
 │
-└── data/                           # Runtime data (seeded)
-    ├── inbox/networks_2024/
-    ├── memory/courses/networks_2024/{kb.yaml, schedule.yaml}
-    ├── memory/students/{5 YAML profiles}
+└── data/                           # Runtime data (gitignored)
+    ├── inbox/{course_id}/          # Uploaded PDFs per course
+    ├── memory/courses/{course_id}/ # kb.yaml + schedule.yaml per course
+    ├── memory/students/            # Per-student YAML profiles
     ├── reports/
     └── logs/
 ```
@@ -143,126 +144,196 @@ cd skills-runtime && DATA_DIR=../data \
 cd gateway && cp ../.env .env && SKILLS_RUNTIME_PORT=8001 npx tsx src/index.ts
 ```
 
+> ⚠️ **IMPORTANT:** Only run ONE gateway instance at a time! Multiple instances cause Telegram "409 Conflict" errors where commands randomly stop working. Always `pkill -f "tsx src/index"` before starting a new one.
+
 ---
 
-## 7. Execution Progress
+## 7. Skills Runtime API Endpoints
 
-### Phase 0 — Environment Setup
-- [x] Read full Master Document (3203 lines)
-- [x] Assessed hardware specs and compatibility
-- [x] Created context.md
-- [x] Install Docker Engine + Docker Compose (v29.4.3)
-- [x] Install Node.js v22+ (v22.22.2)
-- [x] Install pnpm (v11.0.8)
-- [x] Install uv (v0.11.11 at ~/.local/bin)
-- [x] Create Telegram bot via @BotFather → token obtained
-- [x] Get OpenAI API key (using gpt-4o-mini instead of Anthropic Claude)
-- [x] Create `.env` file with tokens
-- [x] Create project directory structure (37 files)
-- [x] Initialize Node.js gateway project
-- [x] Initialize Python skills-runtime project
-- [x] Run `pnpm install` in gateway/ (336 packages)
-- [x] Run `uv pip install` in skills-runtime/ (all deps installed)
-- [x] Adapted ALL code from Anthropic to OpenAI API
-- [x] Seed demo data (1 course, 5 students, KB with TCP/IP topic)
-- [x] Skills Runtime starts → http://localhost:8001/health returns OK
-- [x] Gateway starts → Telegram bot polling
-- [x] `/start` command returns welcome message
-- [x] Test: Telegram bot — user confirmed "telegram works fine"
-- [x] Git repo initialized with first commit
+| Endpoint | Method | Purpose |
+|----------|--------|---------|
+| `/health` | GET | Health check |
+| `/skill/pdf_digest` | POST | Ingest PDF → extract → chunk → summarize → KB |
+| `/skill/quiz_gen` | POST | Generate MCQ quiz (supports `topic_id: "random"`) |
+| `/skill/doubt` | POST | Answer question from course KB with citations |
+| `/skill/deadlines` | POST | Check upcoming deadlines with urgency indicators |
+| `/skill/student_status` | POST | Quiz scores, weak topics, doubt count |
+| `/skill/instructor_report` | POST | Generate weekly .docx report |
+| `/skill/topics/{course_id}` | GET | List all topics in a course KB |
+| `/skill/courses` | GET | List all courses |
+| `/skill/create_course` | POST | Create new course folder with empty KB |
+| `/skill/set_active_course` | POST | Set student's active course |
+| `/skill/active_course/{student_id}` | GET | Get student's active course |
 
-### Phase 1 — PDF Ingestion Pipeline
-- [x] Implement `pdf_digest/ingest.py` (PyMuPDF + pdfplumber extraction)
-- [x] Implement text chunking (512 words, 50 overlap)
-- [x] Implement summarization via OpenAI API
-- [x] Implement YAML KB writer (atomic write pattern)
-- [x] Implement folder watcher (`pdf_digest/watcher.py` — watchdog)
-- [x] PDF upload via Telegram (bot downloads + auto-ingests)
-- [x] Test: PDFs ingested into kb.yaml (4 topics: tcp_ip, scrum, gen_ai, cc_exp2)
+---
 
-### Phase 2 — Telegram Bot + Doubt Answering
-- [x] Implement Telegram adapter (telegram.ts)
-- [x] Implement intent classifier (regex-based)
-- [x] Implement KB retrieval — score-based topic matching (not fallback!)
-- [x] Implement prompt assembly + OpenAI API call
-- [x] Implement doubt logging to student Cognitive RAM
-- [x] Test: student asks doubt → user confirmed working
-- [x] Fix: unrelated questions no longer fallback to TCP/IP (returns "not in notes")
+## 8. Telegram Bot Commands & UX
 
-### Phase 3 — Quiz System
-- [x] Implement `quiz_gen/generate.py`
-- [x] Quiz delivery via Telegram (sendPoll)
-- [x] `/quiz` — random topic from ALL uploaded PDFs (not just TCP/IP)
-- [x] `/quiz <topic_id>` — quiz on specific topic
-- [x] `/quiz list` or `/topics` — list all available topics with tap-to-quiz buttons
-- [x] GET `/skill/topics/{course_id}` — API endpoint listing KB topics
-- [ ] Answer collection + score logging
+All commands registered in ☰ menu via `setMyCommands`:
 
-### Phase 4 — Deadline Prep-Coach
-- [x] Implement `calendar_watch/watch.py`
+| Command | Description |
+|---------|-------------|
+| `/start` | Welcome with main menu buttons |
+| `/help` | All commands |
+| `/quiz` | Random topic quiz (3 MCQ polls) |
+| `/quiz <topic_id>` | Quiz on specific topic |
+| `/topics` | List topics — tap to quiz |
+| `/courses` | List & switch active course |
+| `/newcourse <name>` | Create course (e.g. `/newcourse Operating Systems`) |
+| `/status` | Quiz scores, weak topics |
+| `/deadlines` | Upcoming assignments/exams |
+| Send **PDF** | Auto-ingests into active course KB |
+| Type **question** | Doubt answering with citations |
+
+### Inline Keyboard Buttons
+Every response has tap-friendly buttons — zero manual typing needed:
+- **Main menu:** Quiz Me · Topics · Status · Deadlines · Switch Course · Help
+- **After quiz:** Another Quiz · Pick Topic · Status · Switch Course
+- **After PDF upload:** Quiz this topic · Random Quiz · All Topics · Courses
+- **After doubt answer:** Quiz Me · More Topics
+- **Topic list:** One button per topic → tap to quiz + Random button
+- **Course list:** One button per course → tap to switch + Add New Course
+
+---
+
+## 9. Multi-Course System
+
+### How it works:
+- Each user has an `active_course` field in their YAML profile
+- All quiz/doubt/status/deadlines use the active course automatically
+- `/courses` shows all courses, tap to switch
+- `/newcourse <name>` creates `data/memory/courses/{slug}/kb.yaml`
+- PDF uploads go to the active course's KB
+
+### Data structure:
+```
+data/memory/courses/
+  networks_2024/          ← created by seed script
+    kb.yaml               ← 4 topics (tcp_ip, scrum, gen_ai, cc_exp2)
+    schedule.yaml         ← seeded assignments/exams
+  operating_systems_2026/ ← created by /newcourse
+    kb.yaml               ← grows as PDFs uploaded
+```
+
+### How `kb.yaml` updates:
+- **Upload PDF via Telegram** → downloads → PyMuPDF extracts text → 512-word chunks → OpenAI summarizes → new topic appended to `kb.yaml`
+- **Deduplication:** same topic_id won't be re-ingested
+- **schedule.yaml** is currently static (seeded data only) — no bot flow to add deadlines yet
+
+---
+
+## 10. Known Bugs & Fixes Applied
+
+| Bug | Fix | Date |
+|-----|-----|------|
+| Doubt answering always returned TCP/IP for any question | Score-based topic matching with stop-word removal; returns "not in notes" when score=0 | May 7 |
+| PDF upload success message broke Telegram markdown | Strip `_*[]` chars from dynamic content before sending | May 7 |
+| `/quiz` always generated TCP/IP questions | `topic_id: "random"` picks randomly from ALL KB topics | May 8 |
+| Multiple bot instances caused 409 Conflict | Kill all `tsx` processes before starting; only run ONE gateway | May 8 |
+| `/courses` command didn't work from menu | Anchored all regexes with `^`; wrapped handlers in `safe()` try-catch | May 8 |
+| `/newcourse` name input treated as doubt | Replaced fragile multi-step Map flow with single-step `/newcourse <name>` | May 8 |
+| LLM model typo `gpt-5-mini` | Fixed to `gpt-4o-mini` | May 7 |
+
+---
+
+## 11. Execution Progress
+
+### Phase 0 — Environment Setup ✅
+- [x] All tools installed (Node.js 22, Python 3.12, pnpm, uv, Docker)
+- [x] Telegram bot created, OpenAI key configured
+- [x] Project scaffolded, dependencies installed
+- [x] All code adapted from Anthropic to OpenAI
+- [x] Demo data seeded (1 course, 5 students)
+- [x] Both services start and work
+- [x] Git repo initialized and pushed to GitHub
+
+### Phase 1 — PDF Ingestion ✅
+- [x] PyMuPDF + pdfplumber extraction
+- [x] 512-word chunking with overlap
+- [x] OpenAI summarization (5 points + key terms + formulas + tags)
+- [x] YAML KB writer with atomic writes
+- [x] Folder watcher (watchdog)
+- [x] Telegram PDF upload → auto-ingest
+- [x] Confirmed: 4 topics ingested into kb.yaml
+
+### Phase 2 — Doubt Answering ✅
+- [x] Score-based KB retrieval (not naive fallback)
+- [x] OpenAI prompt with course context + citations
+- [x] Doubt logging to student Cognitive RAM
+- [x] Rejects off-topic questions cleanly
+
+### Phase 3 — Quiz System ✅
+- [x] MCQ generation via OpenAI
+- [x] Telegram poll delivery
+- [x] Random topic + specific topic + topic picker
+- [x] `/skill/topics/{course_id}` API endpoint
+- [ ] Answer collection + score logging to student profile
+
+### Phase 4 — Deadline Prep-Coach ✅
 - [x] 3-day lookahead from schedule.yaml
-- [x] Personalized weak-topic drill alerts
-- [x] `/deadlines` command in Telegram bot
-- [x] `/status` shows real quiz scores from YAML profiles
-- [ ] HEARTBEAT.md 9 AM daily trigger (needs cron runner)
+- [x] Weak-topic warnings
+- [x] `/deadlines` and `/status` commands
 
-### Phase 5 — Instructor Report
-- [x] Implement `instructor_report/generate_docx.py`
-- [ ] Email via SendGrid or Gmail SMTP
-- [ ] HEARTBEAT.md Friday 5 PM trigger
+### Phase 5 — Instructor Report (Partial)
+- [x] `generate_docx.py` implemented
+- [ ] Email delivery (SendGrid/SMTP)
+- [ ] HEARTBEAT trigger
 
-### Phase 6 — UX & Telegram Menu
-- [x] Bot menu commands via `setMyCommands` (☰ button in Telegram)
-- [x] Inline keyboard buttons on EVERY response (no manual typing needed)
-- [x] Main menu: Quiz Me, Topics, My Status, Deadlines, Help
-- [x] Topic picker: tap a topic → starts quiz
-- [x] After quiz: "Another Quiz" / "Pick Topic" / "My Status" buttons
-- [x] After doubt answer: "Quiz Me" / "More Topics" buttons
-- [x] After PDF upload: "Quiz this topic" / "Random Quiz" buttons
-- [x] `/start` shows welcome with inline menu buttons
+### Phase 6 — UX & Multi-Course ✅
+- [x] Bot menu commands (`setMyCommands`)
+- [x] Inline keyboard buttons on every response
+- [x] Multi-course: create, switch, per-user active course
+- [x] Single-step `/newcourse <name>`
+- [x] All handlers wrapped in `safe()` try-catch
+- [x] All regexes anchored with `^`
 
-### Phase 7 — Integration Testing & Demo
-- [x] PDF upload → kb.yaml update confirmed (4 topics)
-- [x] Seed demo data (5 test students)
+### Phase 7 — Documentation & Submission
+- [x] README.md updated (correct tech stack, commands, setup)
+- [x] AI_DISCLOSURE.md updated (OpenAI, not Anthropic)
+- [x] context.md maintained as agent handoff doc
+- [x] GitHub pushed — github.com/pavannaik2004/EduClaw
 - [ ] Record demo video (10 minutes)
-- [x] Write README.md
-- [x] Write AI_DISCLOSURE.md
-- [x] Git repo initialized locally (first commit done)
-- [x] Push to GitHub (public) — github.com/pavannaik2004/EduClaw
 - [ ] Submit via Google Form
 
 ---
 
-## 8. Key Decisions
+## 12. Key Decisions
 
 | Decision | Choice | Why |
 |----------|--------|-----|
 | Skip Ollama/local LLM | ✅ | No dedicated GPU |
-| Use **OpenAI** (not Anthropic) | ✅ | User had OpenAI key available |
-| LLM Model: `gpt-4o-mini` | ✅ | Cost-efficient, fast, good JSON output |
-| Python 3.12 | ✅ | Already installed, all deps work |
-| Skip WhatsApp | ✅ | Telegram-only for demo reliability |
-| No vector DB | ✅ | YAML keyword search sufficient for MVP |
+| Use **OpenAI** (not Anthropic) | ✅ | User had OpenAI key |
+| LLM Model: `gpt-4o-mini` | ✅ | Cost-efficient, fast, good JSON |
+| Python 3.12 | ✅ | Already installed |
+| Telegram-only (skip WhatsApp) | ✅ | Demo reliability |
+| No vector DB — YAML search | ✅ | Sufficient for MVP |
 | Run locally (no Docker) for dev | ✅ | Faster iteration |
+| Single-step `/newcourse` (not multi-step) | ✅ | Fragile in-memory state broke |
+| Score-based KB matching (not fallback) | ✅ | Prevents off-topic TCP/IP answers |
 
 ---
 
-## 9. Agent Handoff Notes
+## 13. Agent Handoff Notes
 
 > **For the next AI agent continuing this project:**
 > 
-> 1. Read this file first. It has everything you need.
-> 2. Check the progress checklist in Section 7 to see what's done.
+> 1. **Read this file first.** It has everything you need.
+> 2. Check the progress checklist in Section 11 to see what's done.
 > 3. Master Document: `/home/pavan/Educlaw/EduClaw_Master_Document.md`
 > 4. **LLM is OpenAI, NOT Anthropic.** All code uses `openai` Python SDK.
 > 5. The user's machine has NO dedicated GPU — skip all local LLM/Ollama stuff.
-> 6. Python venv is at `/home/pavan/Educlaw/skills-runtime/.venv/`
-> 7. uv is at `~/.local/bin/uv` — add to PATH first.
-> 8. The deadline is **8 May 2026 EOD** — prioritize working demo over perfect code.
-> 9. Focus on Telegram-only (skip WhatsApp/Discord for demo).
-> 10. Update this file's progress checkboxes as you complete tasks.
-> 11. Data lives at `/home/pavan/Educlaw/data/` (not inside skills-runtime/).
-> 12. The user (Pavan) is a 3rd-year CSE student.
+> 6. Python venv: `/home/pavan/Educlaw/skills-runtime/.venv/`
+> 7. uv: `~/.local/bin/uv` — add to PATH first.
+> 8. The deadline is **8 May 2026 EOD**.
+> 9. Focus on Telegram-only (skip WhatsApp/Discord).
+> 10. Data lives at `/home/pavan/Educlaw/data/` (not inside skills-runtime/).
+> 11. The user (Pavan) is a 3rd-year CSE student. Team: Pavan Naik + Sumanth Hegde.
+> 12. **ONLY run ONE gateway instance.** Multiple instances cause 409 Conflict.
+> 13. The gateway `telegram.ts` has `safe()` wrappers — check terminal for "Handler error:" logs.
+> 14. `kb.yaml` and `schedule.yaml` are per-course at `data/memory/courses/{course_id}/`.
+> 15. Each student YAML has `active_course` field — all commands use it dynamically.
+> 16. `/newcourse` is single-step: `/newcourse Operating Systems` (no multi-step flow).
+> 17. README.md and AI_DISCLOSURE.md are up-to-date and pushed.
 
 ---
 
