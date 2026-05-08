@@ -3,7 +3,6 @@ Calendar Watch — Deadline Prep-Coach
 Reads course schedules and sends personalized deadline alerts.
 """
 
-import os
 import yaml
 from pathlib import Path
 from datetime import datetime, timedelta

@@ -36,7 +36,7 @@ export class TelegramAdapter {
   private async getActiveCourse(userId: string): Promise<string> {
     try {
       const res = await fetch(`${this.skillsRuntimeUrl}/skill/active_course/telegram_${userId}`);
-      const data = await res.json();
+      const data = (await res.json()) as any;
       return data.active_course || 'networks_2024';
     } catch {
       return 'networks_2024';
@@ -178,7 +178,7 @@ export class TelegramAdapter {
       const courseId = data.replace('switch_', '');
       await this.setActiveCourse(userId, courseId);
       const res = await fetch(`${this.skillsRuntimeUrl}/skill/courses`);
-      const d = await res.json();
+      const d = (await res.json()) as any;
       const c = d.courses?.find((x: any) => x.course_id === courseId);
       await this.bot.sendMessage(chatId,
         `✅ Switched to *${c?.course_name || courseId}*!\n\nAll questions, quizzes, and PDF uploads will now use this course.`,
@@ -227,7 +227,7 @@ export class TelegramAdapter {
     await this.bot.sendChatAction(chatId, 'typing');
     try {
       const res = await fetch(`${this.skillsRuntimeUrl}/skill/courses`);
-      const data = await res.json();
+      const data = (await res.json()) as any;
 
       if (!data.courses || data.courses.length === 0) {
         await this.bot.sendMessage(chatId,
@@ -293,7 +293,7 @@ export class TelegramAdapter {
     const courseId = await this.getActiveCourse(userId);
     try {
       const res = await fetch(`${this.skillsRuntimeUrl}/skill/topics/${courseId}`);
-      const data = await res.json();
+      const data = (await res.json()) as any;
 
       if (!data.success || !data.topics || data.topics.length === 0) {
         await this.bot.sendMessage(chatId,
@@ -328,7 +328,7 @@ export class TelegramAdapter {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ course_id: courseId, topic_id: topicId, count: 3 }),
       });
-      const data = await res.json();
+      const data = (await res.json()) as any;
 
       if (data.success && data.questions) {
         await this.bot.sendMessage(chatId, '📝 *Quiz Time!* — 3 questions:', { parse_mode: 'Markdown' });
@@ -372,7 +372,7 @@ export class TelegramAdapter {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ student_id: `telegram_${userId}`, course_id: courseId, question: msg.text }),
       });
-      const data = await res.json();
+      const data = (await res.json()) as any;
 
       if (data.success) {
         await this.bot.sendMessage(chatId, `🧠 *Answer:*\n\n${data.answer}`, {
@@ -407,7 +407,7 @@ export class TelegramAdapter {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ course_id: courseId, student_id: `telegram_${userId}` }),
       });
-      const data = await res.json();
+      const data = (await res.json()) as any;
       await this.bot.sendMessage(chatId, data.message || '⚠️ Could not check deadlines.', {
         parse_mode: 'Markdown', reply_markup: this.mainMenu(),
       });
@@ -425,7 +425,7 @@ export class TelegramAdapter {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ student_id: `telegram_${userId}`, course_id: courseId }),
       });
-      const data = await res.json();
+      const data = (await res.json()) as any;
       await this.bot.sendMessage(chatId, data.status_message || '⚠️ Could not fetch status.', {
         parse_mode: 'Markdown', reply_markup: this.mainMenu(),
       });
@@ -471,7 +471,7 @@ export class TelegramAdapter {
           topic_name: doc.file_name!.replace('.pdf', '').replace(/[_-]/g, ' '),
         }),
       });
-      const data = await res.json();
+      const data = (await res.json()) as any;
 
       if (data.success) {
         const topicId = this.strip(data.topic_id);

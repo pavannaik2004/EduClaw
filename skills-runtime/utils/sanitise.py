@@ -3,7 +3,6 @@ Prompt injection prevention.
 Defense-in-depth — SOUL.md is the primary protection.
 """
 
-import re
 
 
 INJECTION_PATTERNS = [

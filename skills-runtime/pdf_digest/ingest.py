@@ -6,7 +6,6 @@ and writes structured output to course knowledge base YAML.
 
 import fitz  # PyMuPDF
 import pdfplumber
-import yaml
 import json
 import re
 import os

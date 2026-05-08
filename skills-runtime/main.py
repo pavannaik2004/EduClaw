@@ -362,7 +362,6 @@ async def student_status(req: StudentStatusRequest):
             )
 
         name = profile.get("name", "Student")
-        courses = profile.get("enrolled_courses", [])
         quiz_scores = profile.get("quiz_scores", {}).get(req.course_id, {})
         weak_topics = profile.get("weak_topics", [])
         doubt_count = len([d for d in profile.get("doubt_log", []) if d.get("course") == req.course_id])
@@ -380,7 +379,7 @@ async def student_status(req: StudentStatusRequest):
 
         msg = f"📊 *EduClaw Status — {name}*\n\n"
         msg += f"📚 Course: {req.course_id.replace('_', ' ').title()}\n"
-        msg += f"✅ Subscription: Active\n"
+        msg += "✅ Subscription: Active\n"
         msg += f"❓ Doubts asked: {doubt_count}\n"
         msg += f"📝 Overall quiz avg: {overall_avg:.0f}%\n\n"
 

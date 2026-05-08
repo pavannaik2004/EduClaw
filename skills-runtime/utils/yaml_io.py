@@ -6,7 +6,6 @@ All writes use tmp+rename pattern to prevent corruption.
 import yaml
 from pathlib import Path
 from datetime import datetime
-from typing import Any
 
 import structlog
 

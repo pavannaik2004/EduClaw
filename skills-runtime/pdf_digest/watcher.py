@@ -18,10 +18,10 @@ from dotenv import load_dotenv
 
 load_dotenv(Path(__file__).parent.parent.parent / ".env")
 
-from utils.logger import setup_logging
-from pdf_digest.ingest import ingest_pdf
+from utils.logger import setup_logging  # noqa: E402
+from pdf_digest.ingest import ingest_pdf  # noqa: E402
 
-import structlog
+import structlog  # noqa: E402
 
 setup_logging()
 log = structlog.get_logger()
@@ -89,11 +89,11 @@ def main():
     inbox_dir = Path(DATA_DIR) / "inbox"
     inbox_dir.mkdir(parents=True, exist_ok=True)
 
-    print(f"👁️  EduClaw PDF Watcher started")
+    print("👁️  EduClaw PDF Watcher started")
     print(f"📁 Watching: {inbox_dir.absolute()}")
     print(f"   Drop PDFs into: {inbox_dir.absolute()}/{{course_id}}/")
     print(f"   Example: {inbox_dir.absolute()}/networks_2024/lecture5.pdf")
-    print(f"   Press Ctrl+C to stop.\n")
+    print("   Press Ctrl+C to stop.\n")
 
     handler = PDFHandler()
     observer = Observer()
