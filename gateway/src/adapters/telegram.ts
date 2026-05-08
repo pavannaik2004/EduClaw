@@ -9,9 +9,6 @@ import type { QuizPayload } from '../types/MessageEnvelope.js';
 import * as fs from 'fs';
 import * as path from 'path';
 
-// Pending state for multi-step flows (in-memory, resets on restart)
-const pendingNewCourse: Map<number, { stage: string; course_id?: string }> = new Map();
-
 export class TelegramAdapter {
   private bot: TelegramBot;
   private skillsRuntimeUrl: string;
@@ -125,26 +122,27 @@ export class TelegramAdapter {
   // ── Handler Setup ─────────────────────────────────────────────────────────
 
   private setupHandlers(): void {
-    this.bot.onText(/\/start/, (msg) => this.handleOnboarding(msg));
-    this.bot.onText(/\/help/, (msg) => this.handleHelp(msg.chat.id));
-    this.bot.onText(/\/topics/, (msg) => this.handleTopics(msg.chat.id, String(msg.from?.id)));
-    this.bot.onText(/\/courses/, (msg) => this.handleCourses(msg.chat.id));
-    this.bot.onText(/\/quiz\s*(.*)/, (msg, match) => this.handleQuiz(msg.chat.id, String(msg.from?.id), match?.[1] || ''));
-    this.bot.onText(/\/deadlines?/, (msg) => this.handleDeadlines(msg.chat.id, String(msg.from?.id)));
-    this.bot.onText(/\/status/, (msg) => this.handleStatus(msg.chat.id, String(msg.from?.id)));
-    this.bot.onText(/\/newcourse/, (msg) => this.startNewCourseFlow(msg.chat.id));
+    this.bot.onText(/^\/start/, (msg) => this.safe(() => this.handleOnboarding(msg)));
+    this.bot.onText(/^\/help/, (msg) => this.safe(() => this.handleHelp(msg.chat.id)));
+    this.bot.onText(/^\/topics/, (msg) => this.safe(() => this.handleTopics(msg.chat.id, String(msg.from?.id))));
+    this.bot.onText(/^\/courses/, (msg) => this.safe(() => this.handleCourses(msg.chat.id)));
+    this.bot.onText(/^\/quiz\s*(.*)/, (msg, match) => this.safe(() => this.handleQuiz(msg.chat.id, String(msg.from?.id), match?.[1] || '')));
+    this.bot.onText(/^\/deadlines?/, (msg) => this.safe(() => this.handleDeadlines(msg.chat.id, String(msg.from?.id))));
+    this.bot.onText(/^\/status/, (msg) => this.safe(() => this.handleStatus(msg.chat.id, String(msg.from?.id))));
+    // /newcourse <CourseName> — single step, e.g. /newcourse Operating Systems
+    this.bot.onText(/^\/newcourse\s*(.*)/, (msg, match) => this.safe(() => this.handleNewCourse(msg.chat.id, String(msg.from?.id), match?.[1] || '')));
 
-    this.bot.on('callback_query', (q) => this.handleCallback(q));
-    this.bot.on('document', (msg) => this.handlePdfUpload(msg));
+    this.bot.on('callback_query', (q) => this.safe(() => this.handleCallback(q)));
+    this.bot.on('document', (msg) => this.safe(() => this.handlePdfUpload(msg)));
     this.bot.on('message', async (msg) => {
       if (!msg.text || !msg.from || msg.text.startsWith('/')) return;
-      // Check if user is in a new-course creation flow
-      if (pendingNewCourse.has(msg.chat.id)) {
-        await this.handleNewCourseInput(msg);
-      } else {
-        await this.handleDoubt(msg);
-      }
+      await this.safe(() => this.handleDoubt(msg));
     });
+  }
+
+  /** Wraps async handlers to catch and log errors */
+  private async safe(fn: () => Promise<void>): Promise<void> {
+    try { await fn(); } catch (err) { console.error('Handler error:', err); }
   }
 
   // ── Callback Handler ──────────────────────────────────────────────────────
@@ -163,7 +161,18 @@ export class TelegramAdapter {
     else if (data === 'action_deadlines') await this.handleDeadlines(chatId, userId);
     else if (data === 'action_help')    await this.handleHelp(chatId);
     else if (data === 'action_main_menu') await this.sendMainMenu(chatId);
-    else if (data === 'action_new_course') await this.startNewCourseFlow(chatId);
+    else if (data === 'action_new_course') {
+      // Prompt user to type /newcourse <name>
+      await this.bot.sendMessage(chatId,
+        '➕ *Add New Course*\n\n' +
+        'Type the command with your course name:\n\n' +
+        '`/newcourse Operating Systems`\n' +
+        '`/newcourse Data Structures`\n' +
+        '`/newcourse DBMS`\n\n' +
+        '_Replace with your actual course name!_',
+        { parse_mode: 'Markdown' }
+      );
+    }
     else if (data.startsWith('quiz_')) await this.handleQuiz(chatId, userId, data.replace('quiz_', ''));
     else if (data.startsWith('switch_')) {
       const courseId = data.replace('switch_', '');
@@ -187,7 +196,7 @@ export class TelegramAdapter {
       `I'm your AI-powered academic assistant.\n\n` +
       `📄 *Upload a PDF* → I'll summarise it into your active course\n` +
       `📝 *Ask any question* → I'll answer from your course notes\n` +
-      `📚 *Multiple courses* → Switch with \`/courses\`\n\n` +
+      `📚 *Multiple courses* → Switch with /courses\n\n` +
       `Tap a button to get started! 👇`,
       { parse_mode: 'Markdown', reply_markup: this.mainMenu() }
     );
@@ -203,7 +212,7 @@ export class TelegramAdapter {
       `/quiz — Random topic quiz\n` +
       `/topics — Topics in active course\n` +
       `/courses — List & switch courses\n` +
-      `/newcourse — Add a new course\n` +
+      `/newcourse <name> — Add a new course\n` +
       `/status — Your scores & stats\n` +
       `/deadlines — Upcoming deadlines\n` +
       `📄 *Send a PDF* — Adds to active course\n` +
@@ -222,70 +231,58 @@ export class TelegramAdapter {
 
       if (!data.courses || data.courses.length === 0) {
         await this.bot.sendMessage(chatId,
-          `📚 No courses yet!\n\nTap *Add New Course* to create one, then send me a PDF.`,
+          `📚 No courses yet!\n\nUse \`/newcourse <name>\` to create one.`,
           { parse_mode: 'Markdown', reply_markup: this.courseKeyboard([]) }
         );
         return;
       }
 
-      let text = `📚 *Your Courses (${data.count})*\n\nTap to switch active course:\n`;
-      await this.bot.sendMessage(chatId, text, {
+      await this.bot.sendMessage(chatId, `📚 *Your Courses (${data.count})*\n\nTap to switch:`, {
         parse_mode: 'Markdown',
         reply_markup: this.courseKeyboard(data.courses),
       });
     } catch (err) {
+      console.error('Courses error:', err);
       await this.bot.sendMessage(chatId, '⚠️ Could not fetch courses.');
     }
   }
 
-  private async startNewCourseFlow(chatId: number): Promise<void> {
-    pendingNewCourse.set(chatId, { stage: 'awaiting_name' });
-    await this.bot.sendMessage(chatId,
-      `➕ *Add New Course*\n\nWhat is the *full name* of the course?\n_(e.g. "Operating Systems", "Data Structures & Algorithms")_`,
-      { parse_mode: 'Markdown' }
-    );
-  }
-
-  private async handleNewCourseInput(msg: TelegramBot.Message): Promise<void> {
-    const chatId = msg.chat.id;
-    const userId = String(msg.from?.id);
-    const state = pendingNewCourse.get(chatId);
-    if (!state) return;
-
-    if (state.stage === 'awaiting_name') {
-      const courseName = msg.text!.trim();
-      // Auto-generate a slug from the name
-      const courseId = courseName.toLowerCase()
-        .replace(/[^a-z0-9 ]/g, '')
-        .trim()
-        .replace(/\s+/g, '_')
-        .substring(0, 30) + '_' + new Date().getFullYear();
-
-      pendingNewCourse.set(chatId, { stage: 'confirming', course_id: courseId });
-
+  /** Single-step course creation: /newcourse Operating Systems */
+  private async handleNewCourse(chatId: number, userId: string, nameArg: string): Promise<void> {
+    const courseName = nameArg.trim();
+    if (!courseName) {
       await this.bot.sendMessage(chatId,
-        `📚 Create course:\n*${courseName}*\nID: \`${courseId}\`\n\nConfirm?`,
-        {
-          parse_mode: 'Markdown',
-          reply_markup: {
-            inline_keyboard: [
-              [
-                { text: '✅ Yes, Create', callback_data: `switch_${courseId}` },
-                { text: '❌ Cancel', callback_data: 'action_main_menu' },
-              ],
-            ],
-          },
-        }
+        '➕ *Add New Course*\n\nUsage:\n`/newcourse Operating Systems`\n`/newcourse Data Structures`',
+        { parse_mode: 'Markdown' }
       );
+      return;
+    }
 
-      // Actually create the course now
+    const courseId = courseName.toLowerCase()
+      .replace(/[^a-z0-9 ]/g, '')
+      .trim()
+      .replace(/\s+/g, '_')
+      .substring(0, 30) + '_' + new Date().getFullYear();
+
+    await this.bot.sendChatAction(chatId, 'typing');
+
+    try {
       await fetch(`${this.skillsRuntimeUrl}/skill/create_course`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ course_id: courseId, course_name: courseName }),
       });
 
-      pendingNewCourse.delete(chatId);
+      await this.setActiveCourse(userId, courseId);
+
+      await this.bot.sendMessage(chatId,
+        `✅ Course created: *${courseName}*\nID: \`${courseId}\`\n\n` +
+        `This is now your active course. Send me a PDF to add material!`,
+        { parse_mode: 'Markdown', reply_markup: this.mainMenu() }
+      );
+    } catch (err) {
+      console.error('Create course error:', err);
+      await this.bot.sendMessage(chatId, '⚠️ Failed to create course.');
     }
   }
 
