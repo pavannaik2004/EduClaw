@@ -1,6 +1,6 @@
 # EduClaw — Project Context & Progress Tracker
 
-> **Last Updated:** 2026-05-07 23:58 IST  
+> **Last Updated:** 2026-05-08 12:00 IST  
 > **Machine:** Pavan's ASUS VivoBook (Linux/Ubuntu)  
 > **Hackathon Deadline:** 8 May 2026 EOD  
 > **Agent Handoff Doc:** Any AI agent can read this file and continue from where the last left off.
@@ -178,22 +178,25 @@ cd gateway && cp ../.env .env && SKILLS_RUNTIME_PORT=8001 npx tsx src/index.ts
 - [x] Implement YAML KB writer (atomic write pattern)
 - [x] Implement folder watcher (`pdf_digest/watcher.py` — watchdog)
 - [x] PDF upload via Telegram (bot downloads + auto-ingests)
-- [ ] Test: drop PDF → verify kb.yaml updated
+- [x] Test: PDFs ingested into kb.yaml (4 topics: tcp_ip, scrum, gen_ai, cc_exp2)
 
 ### Phase 2 — Telegram Bot + Doubt Answering
 - [x] Implement Telegram adapter (telegram.ts)
 - [x] Implement intent classifier (regex-based)
-- [x] Implement KB retrieval (keyword search from YAML)
+- [x] Implement KB retrieval — score-based topic matching (not fallback!)
 - [x] Implement prompt assembly + OpenAI API call
 - [x] Implement doubt logging to student Cognitive RAM
 - [x] Test: student asks doubt → user confirmed working
+- [x] Fix: unrelated questions no longer fallback to TCP/IP (returns "not in notes")
 
-### Phase 3 — HEARTBEAT Quiz System
+### Phase 3 — Quiz System
 - [x] Implement `quiz_gen/generate.py`
-- [x] Configure HEARTBEAT.md with 6 PM trigger
 - [x] Quiz delivery via Telegram (sendPoll)
+- [x] `/quiz` — random topic from ALL uploaded PDFs (not just TCP/IP)
+- [x] `/quiz <topic_id>` — quiz on specific topic
+- [x] `/quiz list` or `/topics` — list all available topics with tap-to-quiz buttons
+- [x] GET `/skill/topics/{course_id}` — API endpoint listing KB topics
 - [ ] Answer collection + score logging
-- [ ] Test: quiz arrives at scheduled time
 
 ### Phase 4 — Deadline Prep-Coach
 - [x] Implement `calendar_watch/watch.py`
@@ -208,19 +211,24 @@ cd gateway && cp ../.env .env && SKILLS_RUNTIME_PORT=8001 npx tsx src/index.ts
 - [ ] Email via SendGrid or Gmail SMTP
 - [ ] HEARTBEAT.md Friday 5 PM trigger
 
-### Phase 6 — Student Onboarding
-- [x] `/start` multi-step onboarding (welcome message)
-- [ ] Collect name, roll number, courses (interactive)
-- [ ] Write student YAML profile (on first message)
+### Phase 6 — UX & Telegram Menu
+- [x] Bot menu commands via `setMyCommands` (☰ button in Telegram)
+- [x] Inline keyboard buttons on EVERY response (no manual typing needed)
+- [x] Main menu: Quiz Me, Topics, My Status, Deadlines, Help
+- [x] Topic picker: tap a topic → starts quiz
+- [x] After quiz: "Another Quiz" / "Pick Topic" / "My Status" buttons
+- [x] After doubt answer: "Quiz Me" / "More Topics" buttons
+- [x] After PDF upload: "Quiz this topic" / "Random Quiz" buttons
+- [x] `/start` shows welcome with inline menu buttons
 
 ### Phase 7 — Integration Testing & Demo
-- [ ] End-to-end test all flows
+- [x] PDF upload → kb.yaml update confirmed (4 topics)
 - [x] Seed demo data (5 test students)
 - [ ] Record demo video (10 minutes)
 - [x] Write README.md
 - [x] Write AI_DISCLOSURE.md
 - [x] Git repo initialized locally (first commit done)
-- [x] Push to GitHub (public)
+- [x] Push to GitHub (public) — github.com/pavannaik2004/EduClaw
 - [ ] Submit via Google Form
 
 ---

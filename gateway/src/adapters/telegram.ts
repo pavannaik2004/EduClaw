@@ -1,6 +1,7 @@
 /**
  * EduClaw Gateway — Telegram Bot Adapter
  * Handles all Telegram messaging through the Bot API.
+ * Features: Menu commands, inline keyboards, PDF upload, quiz, doubts.
  */
 
 import TelegramBot from 'node-telegram-bot-api';
@@ -15,9 +16,78 @@ export class TelegramAdapter {
   constructor(token: string, skillsRuntimeUrl: string = 'http://localhost:8001') {
     this.bot = new TelegramBot(token, { polling: true });
     this.skillsRuntimeUrl = skillsRuntimeUrl;
+    this.registerCommands();
     this.setupHandlers();
     console.log('🤖 EduClaw Telegram bot started (polling mode)');
   }
+
+  /**
+   * Register bot commands — these show up in Telegram's menu button (☰).
+   */
+  private async registerCommands(): Promise<void> {
+    try {
+      await this.bot.setMyCommands([
+        { command: 'start', description: '👋 Welcome & onboarding' },
+        { command: 'help', description: '❓ Show all commands' },
+        { command: 'quiz', description: '📝 Take a quiz (random topic)' },
+        { command: 'topics', description: '📋 List all available topics' },
+        { command: 'status', description: '📊 Your quiz scores & stats' },
+        { command: 'deadlines', description: '📅 Upcoming deadlines' },
+      ]);
+      console.log('✅ Bot menu commands registered');
+    } catch (err) {
+      console.error('Failed to register commands:', err);
+    }
+  }
+
+  // ── Inline Keyboard Helpers ───────────────────────────────────────────────
+
+  private mainMenuKeyboard(): TelegramBot.InlineKeyboardMarkup {
+    return {
+      inline_keyboard: [
+        [
+          { text: '📝 Quiz Me', callback_data: 'action_quiz_random' },
+          { text: '📋 Topics', callback_data: 'action_topics' },
+        ],
+        [
+          { text: '📊 My Status', callback_data: 'action_status' },
+          { text: '📅 Deadlines', callback_data: 'action_deadlines' },
+        ],
+        [
+          { text: '❓ Help', callback_data: 'action_help' },
+        ],
+      ],
+    };
+  }
+
+  private topicQuizKeyboard(topics: any[]): TelegramBot.InlineKeyboardMarkup {
+    // Build rows of 2 buttons each for topic selection
+    const rows: TelegramBot.InlineKeyboardButton[][] = [];
+    for (let i = 0; i < topics.length; i += 2) {
+      const row: TelegramBot.InlineKeyboardButton[] = [];
+      row.push({
+        text: `📝 ${this.truncate(topics[i].topic_name, 25)}`,
+        callback_data: `quiz_${topics[i].topic_id.substring(0, 50)}`,
+      });
+      if (i + 1 < topics.length) {
+        row.push({
+          text: `📝 ${this.truncate(topics[i + 1].topic_name, 25)}`,
+          callback_data: `quiz_${topics[i + 1].topic_id.substring(0, 50)}`,
+        });
+      }
+      rows.push(row);
+    }
+    // Add "Random" button at the bottom
+    rows.push([{ text: '🎲 Random Topic Quiz', callback_data: 'action_quiz_random' }]);
+    return { inline_keyboard: rows };
+  }
+
+  private truncate(str: string, len: number): string {
+    const clean = str.replace(/[_*[\]`]/g, '');
+    return clean.length > len ? clean.substring(0, len - 1) + '…' : clean;
+  }
+
+  // ── Handler Setup ─────────────────────────────────────────────────────────
 
   private setupHandlers(): void {
     // Handle /start command
@@ -27,41 +97,32 @@ export class TelegramAdapter {
 
     // Handle /help command
     this.bot.onText(/\/help/, async (msg) => {
-      await this.bot.sendMessage(
-        msg.chat.id,
-        '🦞 *EduClaw — Your Academic Assistant*\n\n' +
-          'Here\'s what I can do:\n\n' +
-          '📚 Ask me any course-related question\n' +
-          '❓ `/quiz` — Random topic quiz\n' +
-          '❓ `/quiz <topic>` — Quiz on a specific topic\n' +
-          '📋 `/topics` — See all available topics\n' +
-          '📊 `/status` — Check your quiz scores & stats\n' +
-          '📅 `/deadlines` — See upcoming deadlines\n' +
-          '📄 Send me a PDF to add course material\n' +
-          '❓ `/help` — Show this message\n\n' +
-          '_Just type your question and I\'ll answer from your course notes!_',
-        { parse_mode: 'Markdown' }
-      );
+      await this.handleHelp(msg.chat.id);
     });
 
     // Handle /topics command
     this.bot.onText(/\/topics/, async (msg) => {
-      await this.handleListTopics(msg);
+      await this.handleListTopics(msg.chat.id);
     });
 
     // Handle /quiz command
     this.bot.onText(/\/quiz\s*(.*)/, async (msg, match) => {
-      await this.handleQuiz(msg, match?.[1] || '');
+      await this.handleQuiz(msg.chat.id, match?.[1] || '');
     });
 
     // Handle /deadlines command
     this.bot.onText(/\/deadlines?/, async (msg) => {
-      await this.handleDeadlines(msg);
+      await this.handleDeadlines(msg.chat.id, String(msg.from?.id));
     });
 
     // Handle /status command
     this.bot.onText(/\/status/, async (msg) => {
-      await this.handleStatus(msg);
+      await this.handleStatus(msg.chat.id, String(msg.from?.id));
+    });
+
+    // Handle inline keyboard button taps
+    this.bot.on('callback_query', async (query) => {
+      await this.handleCallbackQuery(query);
     });
 
     // Handle PDF document uploads
@@ -77,6 +138,38 @@ export class TelegramAdapter {
     });
   }
 
+  // ── Callback Query Handler (Button Taps) ──────────────────────────────────
+
+  private async handleCallbackQuery(query: TelegramBot.CallbackQuery): Promise<void> {
+    const chatId = query.message?.chat.id;
+    const userId = String(query.from.id);
+    const data = query.data || '';
+
+    if (!chatId) return;
+
+    // Acknowledge the button press immediately
+    await this.bot.answerCallbackQuery(query.id);
+
+    if (data === 'action_quiz_random') {
+      await this.handleQuiz(chatId, '');
+    } else if (data === 'action_topics') {
+      await this.handleListTopics(chatId);
+    } else if (data === 'action_status') {
+      await this.handleStatus(chatId, userId);
+    } else if (data === 'action_deadlines') {
+      await this.handleDeadlines(chatId, userId);
+    } else if (data === 'action_help') {
+      await this.handleHelp(chatId);
+    } else if (data === 'action_pick_topic') {
+      await this.handleTopicPicker(chatId);
+    } else if (data.startsWith('quiz_')) {
+      const topicId = data.replace('quiz_', '');
+      await this.handleQuiz(chatId, topicId);
+    }
+  }
+
+  // ── Command Handlers ──────────────────────────────────────────────────────
+
   private async handleOnboarding(msg: TelegramBot.Message): Promise<void> {
     const chatId = msg.chat.id;
     const name = msg.from?.first_name || 'Student';
@@ -84,22 +177,41 @@ export class TelegramAdapter {
     await this.bot.sendMessage(
       chatId,
       `👋 Welcome to *EduClaw*, ${name}!\n\n` +
-        "I'm your AI-powered academic assistant. Here's what I do:\n\n" +
-        '📚 Answer your course doubts (with citations!)\n' +
-        '📝 Quizzes on any uploaded topic\n' +
-        '📅 Deadline alerts\n' +
-        '📄 Upload PDFs to add course material\n\n' +
-        'Try: _"What is the difference between TCP and UDP?"_\n' +
-        'Or type `/help` for all commands.',
-      { parse_mode: 'Markdown' }
+        "I'm your AI-powered academic assistant.\n\n" +
+        '📄 *Upload a PDF* to add course material\n' +
+        '📚 *Ask any question* and I\'ll answer from your notes\n' +
+        '📝 *Take quizzes* to test your knowledge\n' +
+        '📅 *Track deadlines* and weak topics\n\n' +
+        'Tap a button below to get started! 👇',
+      {
+        parse_mode: 'Markdown',
+        reply_markup: this.mainMenuKeyboard(),
+      }
     );
 
     console.log(`📥 New user onboarded: ${name} (${msg.from?.id})`);
   }
 
-  private async handleListTopics(msg: TelegramBot.Message): Promise<void> {
-    const chatId = msg.chat.id;
+  private async handleHelp(chatId: number): Promise<void> {
+    await this.bot.sendMessage(
+      chatId,
+      '🦞 *EduClaw — Your Academic Assistant*\n\n' +
+        '*Commands:*\n' +
+        '📝 `/quiz` — Random topic quiz\n' +
+        '📋 `/topics` — See all topics & pick one for quiz\n' +
+        '📊 `/status` — Your quiz scores & stats\n' +
+        '📅 `/deadlines` — Upcoming deadlines\n' +
+        '📄 Send a PDF — Add course material\n' +
+        '💬 Type any question — Get answers from your notes\n\n' +
+        '_Or just tap a button below!_ 👇',
+      {
+        parse_mode: 'Markdown',
+        reply_markup: this.mainMenuKeyboard(),
+      }
+    );
+  }
 
+  private async handleListTopics(chatId: number): Promise<void> {
     await this.bot.sendChatAction(chatId, 'typing');
 
     try {
@@ -112,23 +224,30 @@ export class TelegramAdapter {
         let text = `📋 *Available Topics (${data.count})*\n\n`;
         data.topics.forEach((t: any, i: number) => {
           text += `${i + 1}. *${stripMd(t.topic_name)}*\n`;
-          text += `   ID: \`${stripMd(t.topic_id)}\`\n`;
-          text += `   Source: ${stripMd(t.source_file)}\n\n`;
+          text += `   📄 ${stripMd(t.source_file)}\n\n`;
         });
-        text += '_Use_ `/quiz <topic_id>` _to quiz on a specific topic._\n';
-        text += '_Use_ `/quiz` _for a random topic._';
+        text += '_Tap a topic below to take a quiz on it:_';
 
-        await this.bot.sendMessage(chatId, text, { parse_mode: 'Markdown' });
+        await this.bot.sendMessage(chatId, text, {
+          parse_mode: 'Markdown',
+          reply_markup: this.topicQuizKeyboard(data.topics),
+        });
       } else {
         await this.bot.sendMessage(
           chatId,
-          '📋 No topics available yet. Send me a PDF to get started!'
+          '📋 No topics available yet.\n\n📄 Send me a PDF to get started!',
+          { reply_markup: this.mainMenuKeyboard() }
         );
       }
     } catch (err) {
       console.error('Topics handler error:', err);
       await this.bot.sendMessage(chatId, '⚠️ Could not fetch topics.');
     }
+  }
+
+  private async handleTopicPicker(chatId: number): Promise<void> {
+    // Same as handleListTopics but specifically for quiz picking
+    await this.handleListTopics(chatId);
   }
 
   private async handleDoubt(msg: TelegramBot.Message): Promise<void> {
@@ -154,7 +273,18 @@ export class TelegramAdapter {
         await this.bot.sendMessage(
           chatId,
           `🧠 *Answer:*\n\n${data.answer}`,
-          { parse_mode: 'Markdown', reply_to_message_id: msg.message_id }
+          {
+            parse_mode: 'Markdown',
+            reply_to_message_id: msg.message_id,
+            reply_markup: {
+              inline_keyboard: [
+                [
+                  { text: '📝 Quiz Me', callback_data: 'action_quiz_random' },
+                  { text: '📋 More Topics', callback_data: 'action_topics' },
+                ],
+              ],
+            },
+          }
         );
       } else {
         await this.bot.sendMessage(
@@ -173,20 +303,18 @@ export class TelegramAdapter {
     }
   }
 
-  private async handleQuiz(msg: TelegramBot.Message, topicArg: string): Promise<void> {
-    const chatId = msg.chat.id;
+  private async handleQuiz(chatId: number, topicArg: string): Promise<void> {
     const trimmed = topicArg.trim();
 
-    // If user typed "/quiz list", show topics instead
+    // If user typed "/quiz list", show topic picker
     if (trimmed === 'list') {
-      await this.handleListTopics(msg);
+      await this.handleListTopics(chatId);
       return;
     }
 
     await this.bot.sendChatAction(chatId, 'typing');
 
     try {
-      // "random" if no arg, otherwise use what user typed
       const topicId = trimmed || 'random';
 
       const response = await fetch(`${this.skillsRuntimeUrl}/skill/quiz_gen`, {
@@ -202,7 +330,7 @@ export class TelegramAdapter {
       const data = await response.json();
 
       if (data.success && data.questions) {
-        await this.bot.sendMessage(chatId, '📝 *Quiz Time!*\n\nHere are your questions:', {
+        await this.bot.sendMessage(chatId, '📝 *Quiz Time!*\n\nHere are your 3 questions:', {
           parse_mode: 'Markdown',
         });
 
@@ -214,10 +342,27 @@ export class TelegramAdapter {
             is_anonymous: false,
           });
         }
+
+        // After quiz, show quick action buttons
+        await this.bot.sendMessage(chatId, '_What\'s next?_', {
+          parse_mode: 'Markdown',
+          reply_markup: {
+            inline_keyboard: [
+              [
+                { text: '🔄 Another Quiz', callback_data: 'action_quiz_random' },
+                { text: '📋 Pick Topic', callback_data: 'action_pick_topic' },
+              ],
+              [
+                { text: '📊 My Status', callback_data: 'action_status' },
+              ],
+            ],
+          },
+        });
       } else {
         await this.bot.sendMessage(
           chatId,
-          `⚠️ ${data.error || 'Could not generate quiz.'}\n\nUse /topics to see available topics.`
+          `⚠️ ${data.error || 'Could not generate quiz.'}`,
+          { reply_markup: this.mainMenuKeyboard() }
         );
       }
     } catch (err) {
@@ -226,10 +371,7 @@ export class TelegramAdapter {
     }
   }
 
-  private async handleDeadlines(msg: TelegramBot.Message): Promise<void> {
-    const chatId = msg.chat.id;
-    const userId = String(msg.from?.id);
-
+  private async handleDeadlines(chatId: number, userId: string): Promise<void> {
     await this.bot.sendChatAction(chatId, 'typing');
 
     try {
@@ -245,7 +387,10 @@ export class TelegramAdapter {
       const data = await response.json();
 
       if (data.success && data.message) {
-        await this.bot.sendMessage(chatId, data.message, { parse_mode: 'Markdown' });
+        await this.bot.sendMessage(chatId, data.message, {
+          parse_mode: 'Markdown',
+          reply_markup: this.mainMenuKeyboard(),
+        });
       } else {
         await this.bot.sendMessage(chatId, '⚠️ Could not check deadlines.');
       }
@@ -255,10 +400,7 @@ export class TelegramAdapter {
     }
   }
 
-  private async handleStatus(msg: TelegramBot.Message): Promise<void> {
-    const chatId = msg.chat.id;
-    const userId = String(msg.from?.id);
-
+  private async handleStatus(chatId: number, userId: string): Promise<void> {
     await this.bot.sendChatAction(chatId, 'typing');
 
     try {
@@ -274,7 +416,10 @@ export class TelegramAdapter {
       const data = await response.json();
 
       if (data.success && data.status_message) {
-        await this.bot.sendMessage(chatId, data.status_message, { parse_mode: 'Markdown' });
+        await this.bot.sendMessage(chatId, data.status_message, {
+          parse_mode: 'Markdown',
+          reply_markup: this.mainMenuKeyboard(),
+        });
       } else {
         await this.bot.sendMessage(chatId, '⚠️ Could not fetch your status.');
       }
@@ -299,12 +444,10 @@ export class TelegramAdapter {
     await this.bot.sendChatAction(chatId, 'typing');
 
     try {
-      // Download the file from Telegram
       const fileLink = await this.bot.getFileLink(doc.file_id);
       const fileResponse = await fetch(fileLink);
       const fileBuffer = Buffer.from(await fileResponse.arrayBuffer());
 
-      // Save to inbox directory
       const inboxDir = path.resolve('..', 'data', 'inbox', 'networks_2024');
       fs.mkdirSync(inboxDir, { recursive: true });
 
@@ -313,7 +456,6 @@ export class TelegramAdapter {
 
       console.log(`📄 PDF saved: ${filePath}`);
 
-      // Call the PDF ingestion skill
       const response = await fetch(`${this.skillsRuntimeUrl}/skill/pdf_digest`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -328,9 +470,10 @@ export class TelegramAdapter {
 
       if (data.success) {
         const stripMd = (str: string) => str.replace(/[_*[\]`]/g, '');
-        
+        const topicId = stripMd(data.topic_id);
+
         let summaryText = '✅ *PDF Ingested Successfully!*\n\n';
-        summaryText += `📚 Topic: *${stripMd(data.topic_id)}*\n\n`;
+        summaryText += `📚 Topic: *${topicId}*\n\n`;
 
         if (data.summary_points && data.summary_points.length > 0) {
           summaryText += '*Key Points:*\n';
@@ -343,13 +486,28 @@ export class TelegramAdapter {
           summaryText += `\n🏷️ Tags: ${stripMd(data.topic_tags.join(', '))}`;
         }
 
-        summaryText += '\n\n_You can now quiz on this topic with_ `/quiz ' + stripMd(data.topic_id) + '`';
+        summaryText += '\n\n_Tap a button below to continue!_';
 
-        await this.bot.sendMessage(chatId, summaryText, { parse_mode: 'Markdown' });
+        await this.bot.sendMessage(chatId, summaryText, {
+          parse_mode: 'Markdown',
+          reply_markup: {
+            inline_keyboard: [
+              [
+                { text: `📝 Quiz: ${this.truncate(topicId, 20)}`, callback_data: `quiz_${data.topic_id.substring(0, 50)}` },
+                { text: '🎲 Random Quiz', callback_data: 'action_quiz_random' },
+              ],
+              [
+                { text: '📋 All Topics', callback_data: 'action_topics' },
+                { text: '📊 My Status', callback_data: 'action_status' },
+              ],
+            ],
+          },
+        });
       } else {
         await this.bot.sendMessage(
           chatId,
-          `⚠️ Failed to process PDF: ${data.error || 'Unknown error'}\n\nMake sure the PDF contains readable text (not a scanned image).`
+          `⚠️ Failed to process PDF: ${data.error || 'Unknown error'}\n\nMake sure the PDF contains readable text (not a scanned image).`,
+          { reply_markup: this.mainMenuKeyboard() }
         );
       }
     } catch (err) {
