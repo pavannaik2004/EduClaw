@@ -1,186 +1,141 @@
-# EduClaw — AI-Powered Academic Productivity Agent
+# EduClaw
 
-> **Samsung PRISM OpenClaw — Clash of the Claws 2026**  
-> **Theme 3:** Productivity Platforms  
-> **Team:** EduClaw
+**Samsung PRISM OpenClaw - Clash of the Claws 2026**
+**Theme 3:** Productivity Platforms
+**Team:** EduClaw
 
 ---
 
-## 🎯 Problem
+## Problem Statement
 
-Indian engineering students face:
-1. **PDF Overload** — 60-page lecture PDFs with buried key concepts
-2. **Instructor Blindspot** — No visibility into which topics confuse students
-3. **Deadline Blindness** — Assignment calendars exist but students ignore them
-4. **Passive Review** — No proactive revision or knowledge testing
+Indian engineering students often face several challenges in managing their academic workload:
+1. Information Overload: Lecture materials are often provided as lengthy, 60+ page PDFs, making it difficult to extract key concepts efficiently.
+2. Lack of Feedback Loops: Instructors have limited visibility into which specific topics are causing confusion among students.
+3. Poor Deadline Management: While assignment calendars exist, students frequently struggle to track and prepare for impending deadlines.
+4. Passive Learning: Traditional study methods lack proactive revision mechanisms and regular knowledge testing.
 
-## 💡 Solution
+## Solution
 
-**EduClaw** is a proactive AI academic agent built on the **OpenClaw** framework. It:
+EduClaw is a proactive AI-driven academic agent built on the OpenClaw framework. It acts as a personalized academic assistant accessible entirely via Telegram, requiring no additional app installations.
 
-- 📚 **Automatically summarizes** lecture PDFs into 5-point digests
-- ❓ **Answers student doubts** using course-specific knowledge (with citations!)
-- 📝 **Generates quizzes** as interactive Telegram polls from uploaded material
-- 📅 **Alerts 3 days before deadlines** with personalised weak-topic warnings
-- 📊 **Tracks student performance** with per-topic score breakdowns
-- 📚 **Multi-course support** — switch between subjects, each with its own knowledge base
+Key features include:
+- Automated Digest Generation: Automatically summarizes uploaded lecture PDFs into concise, 5-point digests.
+- Context-Aware Doubt Resolution: Answers student questions using course-specific knowledge bases, providing citations for its answers.
+- Proactive Quizzing: Generates interactive multiple-choice quizzes as Telegram polls based on uploaded course material.
+- Deadline Alerts: Alerts students three days prior to deadlines, providing personalized warnings based on their weaker topics.
+- Performance Tracking: Maintains per-topic score breakdowns to track student progress over time.
+- Multi-Course Management: Allows students to switch between different subjects, maintaining separate knowledge bases and schedules for each.
 
-All via **Telegram** — zero app installation required. Fully navigable with inline buttons — no typing needed.
+## Architecture
 
-## 🏗️ Architecture
+Students interact with EduClaw through a Telegram bot interface. This interface is powered by a Node.js/TypeScript Gateway that communicates with a Python/FastAPI Skills Runtime. The runtime utilizes the OpenAI GPT-4o-mini model for natural language processing tasks (summarization, question answering, quiz generation) and maintains state using the OpenClaw Cognitive RAM pattern (YAML files).
 
-```
-Students (Telegram) → Gateway (Node.js/TS) → Skills Runtime (Python/FastAPI)
-                              ↓                         ↓
-                     Inline Keyboards           OpenAI GPT-4o-mini
-                     Menu Commands              (Summarize/Quiz/Answer)
-                     PDF Upload                         ↓
-                                              Cognitive RAM (YAML files)
-                                              ├── courses/{id}/kb.yaml
-                                              ├── courses/{id}/schedule.yaml
-                                              └── students/{id}.yaml
-```
+## Tech Stack
 
-## 🛠️ Tech Stack
+- Agent Framework: OpenClaw Base (Pi Engine, SOUL.md, HEARTBEAT.md)
+- Gateway: Node.js 22 / TypeScript (Telegram Bot API)
+- Skills Runtime: Python 3.12 / FastAPI
+- Large Language Model: OpenAI GPT-4o-mini
+- Storage: YAML files (Cognitive RAM pattern)
+- Reports: python-docx
 
-| Component | Technology |
-|-----------|-----------|
-| Agent Framework | OpenClaw Base (Pi Engine, SOUL.md, HEARTBEAT.md) |
-| Gateway | Node.js 22 / TypeScript (Telegram Bot API) |
-| Skills Runtime | Python 3.12 / FastAPI |
-| LLM | OpenAI GPT-4o-mini |
-| Messaging | Telegram Bot API (polling mode) |
-| Storage | YAML files (OpenClaw Cognitive RAM pattern) |
-| Reports | python-docx |
-| Deployment | Docker Compose (optional) / Local dev |
+---
 
-## 🚀 Quick Start
+## Setup Instructions
 
 ### Prerequisites
-- Node.js ≥ 22 + pnpm
-- Python 3.11+ + uv (or pip)
-- Telegram Bot Token (from [@BotFather](https://t.me/BotFather))
+- Node.js (version 22 or higher) and pnpm
+- Python (version 3.11 or higher) and uv (or pip)
+- Telegram Bot Token (obtainable from @BotFather on Telegram)
 - OpenAI API Key
 
-### Setup
+### Installation
 
+1. Clone the repository:
+   ```bash
+   git clone https://github.com/pavannaik2004/EduClaw.git
+   cd EduClaw
+   ```
+
+2. Configure environment variables:
+   ```bash
+   cp .env.example .env
+   # Edit the .env file and add your TELEGRAM_BOT_TOKEN and OPENAI_API_KEY
+   ```
+
+3. Install dependencies for the Gateway:
+   ```bash
+   cd gateway
+   pnpm install
+   cd ..
+   ```
+
+4. Install dependencies for the Skills Runtime:
+   ```bash
+   cd skills-runtime
+   uv venv
+   uv pip install -e .
+   cd ..
+   ```
+
+5. Seed demo data (optional but recommended for testing):
+   ```bash
+   python scripts/seed_demo_data.py
+   ```
+
+### Running the Application
+
+You will need two terminal windows to run both services.
+
+Terminal 1: Start the Skills Runtime (Python)
 ```bash
-# 1. Clone
-git clone https://github.com/pavannaik2004/EduClaw.git
-cd EduClaw
-
-# 2. Configure
-cp .env.example .env
-# Edit .env — add TELEGRAM_BOT_TOKEN and OPENAI_API_KEY
-
-# 3. Install dependencies
-cd gateway && pnpm install && cd ..
-cd skills-runtime && uv venv && uv pip install -e . && cd ..
-
-# 4. Seed demo data
-python scripts/seed_demo_data.py
-
-# 5. Run (two terminals)
-# Terminal 1: Skills Runtime (Python)
-cd skills-runtime && DATA_DIR=../data \
-  OPENAI_API_KEY=<your-key> LLM_MODEL=gpt-4o-mini \
-  .venv/bin/uvicorn main:app --host 0.0.0.0 --port 8001 --reload
-
-# Terminal 2: Gateway (Telegram Bot)
-cd gateway && cp ../.env .env && SKILLS_RUNTIME_PORT=8001 npx tsx src/index.ts
+cd skills-runtime
+export DATA_DIR=../data
+export OPENAI_API_KEY=<your_openai_api_key>
+export LLM_MODEL=gpt-4o-mini
+.venv/bin/uvicorn main:app --host 0.0.0.0 --port 8001 --reload
 ```
 
-## 📱 Telegram Bot Commands
-
-All commands are accessible from the ☰ menu button and as inline keyboard buttons:
-
-| Command | Description |
-|---------|-------------|
-| `/start` | Welcome message with main menu buttons |
-| `/help` | Show all commands |
-| `/quiz` | Random topic quiz (3 MCQ polls) |
-| `/quiz <topic_id>` | Quiz on a specific topic |
-| `/topics` | List all topics — tap to quiz |
-| `/courses` | List & switch active course |
-| `/newcourse <name>` | Create a new course (e.g. `/newcourse Operating Systems`) |
-| `/status` | Quiz scores, weak topics, doubt count |
-| `/deadlines` | Upcoming assignments & exams with urgency indicators |
-| Send a **PDF** | Auto-ingests into active course KB |
-| Type a **question** | Doubt answering from course notes with citations |
-
-### Interactive Inline Buttons
-
-Every response includes tap-friendly buttons — no manual typing needed:
-- **After `/start`:** Quiz Me · Topics · Status · Deadlines · Switch Course · Help
-- **After a quiz:** Another Quiz · Pick Topic · My Status · Switch Course
-- **After uploading a PDF:** Quiz this topic · Random Quiz · All Topics
-- **After a doubt answer:** Quiz Me · More Topics
-
-## 📂 Project Structure
-
+Terminal 2: Start the Gateway (Telegram Bot)
+```bash
+cd gateway
+cp ../.env .env
+export SKILLS_RUNTIME_PORT=8001
+npx tsx src/index.ts
 ```
-EduClaw/
-├── gateway/                    # Node.js/TypeScript — Telegram bot
-│   └── src/
-│       ├── index.ts            # Entry point
-│       └── adapters/telegram.ts # Bot: commands, buttons, PDF upload
-│
-├── skills-runtime/             # Python 3.12 / FastAPI
-│   ├── main.py                 # API: /health, /skill/* endpoints
-│   ├── pdf_digest/             # PDF extraction + OpenAI summarization
-│   ├── quiz_gen/               # MCQ generation from KB
-│   ├── calendar_watch/         # Deadline alerts with weak-topic warnings
-│   ├── instructor_report/      # Weekly .docx reports
-│   └── utils/                  # Logger, YAML I/O, sanitizer
-│
-├── pi-engine/                  # OpenClaw config
-│   ├── SOUL.md                 # Agent persona & safety rules
-│   ├── HEARTBEAT.md            # Cron scheduler
-│   └── skills/                 # 5 skill definitions
-│
-├── data/                       # Runtime data (gitignored)
-│   ├── inbox/{course_id}/      # Uploaded PDFs
-│   ├── memory/courses/{id}/    # kb.yaml + schedule.yaml per course
-│   └── memory/students/{id}.yaml # Per-student profiles
-│
-├── scripts/seed_demo_data.py   # Seed test data
-├── .env.example                # Environment template
-├── context.md                  # Agent handoff document
-└── AI_DISCLOSURE.md            # Required by hackathon
-```
+Note: Ensure only one instance of the Gateway is running at any time to prevent Telegram polling conflicts.
 
-## 🤖 OpenClaw Integration
+---
 
-EduClaw extends OpenClaw Base with:
-- **SOUL.md** — Academic assistant persona with safety constraints (refuses exam cheating)
-- **HEARTBEAT.md** — Cron scheduler for proactive daily quizzes and deadline alerts
-- **Cognitive RAM** — Per-student YAML profiles tracking quiz scores, doubts, and weak topics
-- **5 Custom Skills** — PDF digest, quiz generation, doubt answering, calendar watch, instructor report
+## Usage Guide
 
-## 🔑 Key Features
+Once both services are running, open Telegram and search for your bot.
 
-### Multi-Course Support
-- Create courses: `/newcourse Data Structures`
-- Switch active course: `/courses` → tap to switch
-- Each course has its own KB, schedule, and inbox folder
-- PDFs, quizzes, and doubts are all scoped to the active course
+### Commands
 
-### Smart Doubt Answering
-- Score-based topic matching (not naive keyword fallback)
-- Returns "not in course notes" for unrelated questions
-- Cites source PDF in every answer
-- Logs doubts to student profile for weak-topic tracking
+All commands can be accessed via the bot menu or typed directly:
 
-### PDF Ingestion Pipeline
-- Upload PDF → extract text (PyMuPDF) → chunk (512 words) → summarize (OpenAI) → append to KB
-- Deduplication: same PDF won't be re-ingested
-- Works via Telegram file upload or folder watcher
+- `/start`: Displays the welcome message and main menu.
+- `/help`: Lists all available commands.
+- `/quiz`: Starts a quiz with 3 random questions from the active course.
+- `/quiz <topic_id>`: Starts a quiz on a specific topic.
+- `/topics`: Lists all topics available in the active course.
+- `/courses`: Lists all enrolled courses and allows switching the active course.
+- `/newcourse <name>`: Creates a new course (e.g., `/newcourse Operating Systems`).
+- `/status`: Displays your current quiz scores, weak topics, and doubt count.
+- `/deadlines`: Shows upcoming assignments and exams.
 
-## 👥 Team
+### Interactions
+
+- Uploading Material: Send a PDF document directly to the bot. It will be ingested into the currently active course's knowledge base.
+- Asking Questions: Type any course-related question in the chat. The bot will answer based on the ingested course notes and provide citations.
+- Inline Navigation: The bot makes extensive use of inline keyboard buttons. After most actions (like finishing a quiz, uploading a PDF, or getting an answer), the bot provides contextual buttons to easily navigate to the next action without typing.
+
+## Team
 
 - Pavan Naik
 - Sumanth Hegde
 
-## 📄 License
+## License
 
-MIT License — See [LICENSE](LICENSE) for details.
+MIT License - See LICENSE file for details.

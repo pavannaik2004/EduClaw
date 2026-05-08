@@ -1,40 +1,40 @@
-# AI Disclosure — EduClaw
+# AI Disclosure
 
-> **Required by Samsung PRISM OpenClaw — Clash of the Claws 2026**
+**Required by Samsung PRISM OpenClaw - Clash of the Claws 2026**
 
-## AI Models Used
+This document details the usage of Artificial Intelligence tools and models in the development and operation of the EduClaw project.
 
-### 1. OpenAI GPT-4o-mini — Primary LLM
-- **Purpose:** PDF summarization, quiz question generation, doubt answering
-- **How:** API calls via `openai` Python SDK
-- **Why:** Cost-efficient, fast response times, strong JSON output formatting, handles academic content well
-- **Cost:** Pay-per-use API pricing (~$0.15/1M input tokens)
+## AI Models Used in the Application
 
-### 2. OpenClaw Framework — Agent Runtime
-- **Purpose:** Core agent infrastructure — Pi Engine for reasoning, HEARTBEAT for scheduling, Cognitive RAM for persistent memory
-- **How:** EduClaw extends OpenClaw with custom Skills and adapters
-- **What we customized:** SOUL.md (persona), HEARTBEAT.md (schedule), 5 custom SKILL.md files, Telegram gateway adapter
+### 1. OpenAI GPT-4o-mini (Primary LLM)
+- Purpose: Natural language understanding and generation for core application features. Specifically, it is used for:
+  - Summarizing uploaded PDF documents into concise bullet points.
+  - Generating multiple-choice quiz questions based on the ingested course material.
+  - Answering student queries by synthesizing information retrieved from the knowledge base.
+- Implementation: The model is accessed via API calls using the `openai` Python SDK within the Skills Runtime microservice.
+- Rationale: GPT-4o-mini was selected for its balance of cost-efficiency, low latency, and strong capability in following instructions for structured JSON output, which is crucial for features like automated quiz generation and formatting doubt responses.
+
+### 2. OpenClaw Framework (Agent Runtime)
+- Purpose: Provides the foundational agent infrastructure. This includes the Pi Engine for reasoning, the HEARTBEAT mechanism for task scheduling, and Cognitive RAM for maintaining persistent memory state.
+- Implementation: EduClaw extends the base OpenClaw framework by introducing custom Skills and a Telegram gateway adapter.
+- Customizations: We defined the agent's persona and constraints in `SOUL.md`, configured the scheduling rules in `HEARTBEAT.md`, and implemented five custom skill modules to handle the specific academic use cases.
 
 ## AI-Assisted Development
 
-### Code Generation
-- Parts of the codebase were developed with assistance from AI coding tools
-- All generated code was reviewed, tested, and modified by the team
-- Architecture decisions and system design were made by the team
+The development process of EduClaw involved the utilization of AI coding assistants to improve productivity.
+
+### Code Generation and Refactoring
+- Tools Used: AI coding assistants (such as Claude and GitHub Copilot) were utilized during the development phase.
+- Application: These tools assisted in generating boilerplate code, writing utility functions, and suggesting refactoring improvements across both the Node.js Gateway and Python Skills Runtime.
+- Human Oversight: All AI-generated code was thoroughly reviewed, tested, and modified by the development team to ensure correctness, security, and alignment with the project's architecture. The overall system design, architecture decisions, and business logic remain team-originated.
 
 ### Documentation
-- Documentation was structured with AI assistance
-- Technical content and architecture decisions are team-originated
+- AI assistance was used to help structure and draft sections of the project documentation, including the README and internal context trackers. The technical content and factual accuracy were verified by the team.
 
-## What AI Does NOT Do
-- EduClaw does NOT provide assignment solutions
-- The agent explicitly refuses exam cheating assistance (enforced via SOUL.md)
-- No student data is used for model training
-- All LLM calls use course-specific content only — no general web knowledge
-- Questions not found in course notes are explicitly rejected ("I don't have that in the course notes")
+## Safety and Limitations
 
-## Data Privacy
-- All student data stays on the local machine
-- LLM API calls include only course content + questions — no PII
-- Student profiles stored as local YAML files, not in any cloud service
-- API keys stored in `.env` (gitignored, never committed)
+The application is designed with strict boundaries regarding its AI capabilities:
+
+- No Academic Dishonesty: EduClaw is explicitly programmed NOT to provide direct solutions to assignments or assist in exam cheating. This constraint is strictly enforced via the agent's persona definition (`SOUL.md`).
+- Contextual Boundaries: The agent is restricted to answering questions based solely on the course materials uploaded by the user. It does not utilize its general pre-training knowledge to answer specific academic queries. If an answer cannot be found in the provided notes, it will explicitly state its inability to answer.
+- Data Privacy: No student data or uploaded course material is used to train or fine-tune any AI models. Data processing is limited to the immediate context window required to fulfill a specific request via the API.
